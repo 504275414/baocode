@@ -10,6 +10,9 @@ import '../agent_kernel.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import 'code_buddy_transport.dart';
+import '../../browser/browser_bridge.dart';
+import '../../browser/browser_tools.dart';
+import '../claude_code/claude_sdk_tools.dart';
 
 /// Adapts `codebuddy --acp` to [AgentKernel] using the Agent Client Protocol.
 class CodeBuddyKernel
@@ -113,6 +116,8 @@ class CodeBuddyKernel
   /// Pending approvals: requestId -> interruptionId
   final Map<String, String> _approvals = {};
   final Map<String, _PendingPermissionRequest> _pendingRpcApprovals = {};
+  HttpServer? _mcpServer;
+  int? _mcpPort;
 
   final List<KernelOption> _models = [
     const KernelOption(
@@ -235,6 +240,9 @@ class CodeBuddyKernel
 
   @override
   void dispose() {
+    unawaited(_mcpServer?.close(force: true));
+    _mcpServer = null;
+    _mcpPort = null;
     unawaited(_subscription?.cancel());
     _transport?.close();
     if (!_stoppedCompleter.isCompleted) {
@@ -273,9 +281,20 @@ class CodeBuddyKernel
         });
       }
 
+      await _ensureMcpServer(workingDir);
+      final mcpPort = _mcpPort;
+
       final sessionResult = await _request('session/new', {
         'cwd': workingDir.replaceAll(r'\', '/'),
-        'mcpServers': <Object>[],
+        'mcpServers': [
+          if (mcpPort != null)
+            {
+              'name': 'baocode',
+              'type': 'http',
+              'url': 'http://127.0.0.1:$mcpPort/mcp',
+              'headers': <Object>[],
+            },
+        ],
       });
 
       if (sessionResult['sessionId'] case final String sid) {
@@ -447,6 +466,68 @@ class CodeBuddyKernel
     );
 
     unawaited(_executeTurn(turn));
+  }
+
+  Future<void> _ensureMcpServer(String workingDir) async {
+    if (_mcpServer != null) return;
+    try {
+      if (BrowserBridge.instance.enabled) {
+        BrowserTools.register();
+      }
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      _mcpServer = server;
+      _mcpPort = server.port;
+
+      server.listen((HttpRequest req) async {
+        try {
+          if (req.method == 'POST') {
+            final body = await utf8.decoder.bind(req).join();
+            final json = jsonDecode(body) as Map<String, Object?>;
+            final method = json['method'] as String? ?? '';
+
+            if (method.startsWith('notifications/')) {
+              req.response
+                ..statusCode = HttpStatus.ok
+                ..headers.contentType = ContentType.json
+                ..write('{}');
+              await req.response.close();
+              return;
+            }
+
+            final response = await ClaudeSdkTools.handle(
+              json,
+              ClaudeSdkCall(
+                cwd: workingDir,
+                sessionId: _sessionId,
+              ),
+            );
+
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(response));
+            await req.response.close();
+          } else {
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.text
+              ..write('BaoCode MCP Server');
+            await req.response.close();
+          }
+        } catch (e) {
+          try {
+            req.response
+              ..statusCode = HttpStatus.internalServerError
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode({
+                'jsonrpc': '2.0',
+                'error': {'code': -32603, 'message': '$e'},
+              }));
+            await req.response.close();
+          } catch (_) {}
+        }
+      });
+    } catch (_) {}
   }
 
   Future<void> _executeTurn(KernelTurn turn) async {

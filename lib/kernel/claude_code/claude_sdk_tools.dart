@@ -198,8 +198,15 @@ abstract final class ClaudeSdkTools {
           ],
         });
       case 'tools/call':
-        final tool = switch (params['name']) {
-          final String name when _offers(call.cwd, name) => _tools[name],
+        final rawName = params['name'] as String? ?? '';
+        final strippedName = rawName.startsWith('mcp__${server}__')
+            ? rawName.substring('mcp__${server}__'.length)
+            : rawName.startsWith('mcp__')
+                ? rawName.substring(rawName.indexOf('__', 5) + 2)
+                : rawName;
+        final tool = switch (strippedName) {
+          final String name when _offers(call.cwd, name) =>
+            _tools[name] ?? _tools[rawName],
           _ => null,
         };
         final input =
