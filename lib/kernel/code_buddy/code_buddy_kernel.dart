@@ -229,12 +229,68 @@ class CodeBuddyKernel
       if (sessionResult['sessionId'] case final String sid) {
         _sessionId = sid;
       }
+
+      if (sessionResult['models'] case final Map modelsMap) {
+        _populateModelsFromSessionResult(modelsMap.cast<String, Object?>());
+      }
+
+      if (sessionResult['modes'] case final Map modesMap) {
+        _populateModesFromSessionResult(modesMap.cast<String, Object?>());
+      }
     } catch (e) {
       health = KernelHealth(KernelHealthStatus.failed, message: e.toString());
       emit(KernelInfoChanged(nextSeq));
       rethrow;
     } finally {
       _connecting = null;
+    }
+  }
+
+  void _populateModelsFromSessionResult(Map<String, Object?> modelsMap) {
+    final available = modelsMap['availableModels'] as List<Object?>? ?? const [];
+    final currentModelId = modelsMap['currentModelId'] as String?;
+    if (available.isNotEmpty) {
+      _models.clear();
+      for (final item in available) {
+        if (item is! Map) continue;
+        final modelId = item['modelId'] as String? ?? '';
+        final name = item['name'] as String? ?? modelId;
+        final desc = item['description'] as String? ?? '';
+        _models.add(KernelOption(modelId, name, Icons.bolt_rounded, desc));
+      }
+      model.options = List.of(_models);
+      if (currentModelId != null) model.reported = currentModelId;
+      emit(KernelInfoChanged(nextSeq));
+    }
+  }
+
+  void _populateModesFromSessionResult(Map<String, Object?> modesMap) {
+    final available = modesMap['availableModes'] as List<Object?>? ?? const [];
+    final currentModeId = modesMap['currentModeId'] as String?;
+    if (available.isNotEmpty) {
+      _modes.clear();
+      for (final item in available) {
+        if (item is! Map) continue;
+        final id = item['id'] as String? ?? '';
+        final name = item['name'] as String? ?? id;
+        final desc = item['description'] as String? ?? '';
+        _modes.add(
+          KernelOption(
+            id,
+            name,
+            switch (id) {
+              'acceptEdits' => Icons.edit_note_rounded,
+              'plan' => Icons.assignment_outlined,
+              'bypassPermissions' => Icons.all_inclusive_rounded,
+              _ => Icons.lock_outline_rounded,
+            },
+            desc,
+          ),
+        );
+      }
+      mode.options = List.of(_modes);
+      if (currentModeId != null) mode.reported = currentModeId;
+      emit(KernelInfoChanged(nextSeq));
     }
   }
 
