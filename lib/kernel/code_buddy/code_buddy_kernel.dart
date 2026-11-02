@@ -364,15 +364,15 @@ class CodeBuddyKernel
 
   void _populateModelsFromSessionResult(Map<String, Object?> modelsMap) {
     final available = modelsMap['availableModels'] as List<Object?>? ?? const [];
-    final currentModelId = modelsMap['currentModelId'] as String?;
+    final currentModelId = modelsMap['currentModelId']?.toString();
     if (available.isNotEmpty) {
       _models.clear();
       for (final item in available) {
         if (item is! Map) continue;
-        final modelId = (item['modelId'] ?? item['id']) as String? ?? '';
+        final modelId = (item['modelId'] ?? item['id'])?.toString() ?? '';
         if (modelId.isEmpty) continue;
-        final name = item['name'] as String? ?? modelId;
-        final desc = item['description'] as String?;
+        final name = item['name']?.toString() ?? modelId;
+        final desc = item['description']?.toString();
         _models.add(_formatModelOption(modelId, name, desc));
       }
       model.options = List.of(_models);
@@ -387,15 +387,15 @@ class CodeBuddyKernel
 
   void _populateModesFromSessionResult(Map<String, Object?> modesMap) {
     final available = modesMap['availableModes'] as List<Object?>? ?? const [];
-    final currentModeId = modesMap['currentModeId'] as String?;
+    final currentModeId = modesMap['currentModeId']?.toString();
     if (available.isNotEmpty) {
       _permissions.clear();
       for (final item in available) {
         if (item is! Map) continue;
-        final id = item['id'] as String? ?? '';
+        final id = item['id']?.toString() ?? '';
         if (id == 'plan') continue;
-        final name = item['name'] as String? ?? id;
-        final desc = item['description'] as String? ?? '';
+        final name = item['name']?.toString() ?? id;
+        final desc = item['description']?.toString() ?? '';
         _permissions.add(
           KernelOption(
             id,
@@ -933,15 +933,15 @@ class CodeBuddyKernel
 
   void _handleModelUpdate(Map<String, Object?> update) {
     final available = update['availableModels'] as List<Object?>? ?? const [];
-    final currentModelId = update['currentModelId'] as String?;
+    final currentModelId = update['currentModelId']?.toString();
     if (available.isNotEmpty) {
       _models.clear();
       for (final item in available) {
         if (item is! Map) continue;
-        final modelId = (item['modelId'] ?? item['id']) as String? ?? '';
+        final modelId = (item['modelId'] ?? item['id'])?.toString() ?? '';
         if (modelId.isEmpty) continue;
-        final name = item['name'] as String? ?? modelId;
-        final desc = item['description'] as String?;
+        final name = item['name']?.toString() ?? modelId;
+        final desc = item['description']?.toString();
         _models.add(_formatModelOption(modelId, name, desc));
       }
       model.options = List.of(_models);
@@ -975,18 +975,18 @@ class CodeBuddyKernel
     final optionsList = update['configOptions'] as List<Object?>? ?? const [];
     for (final opt in optionsList) {
       if (opt is! Map) continue;
-      final id = opt['id'] as String?;
-      final currentVal = opt['currentValue'] as String?;
+      final id = opt['id']?.toString();
+      final currentVal = opt['currentValue']?.toString();
       final items = opt['options'] as List<Object?>? ?? const [];
 
       if (id == 'model') {
         _models.clear();
         for (final item in items) {
           if (item is! Map) continue;
-          final val = item['value'] as String? ?? '';
-          final rawName = item['name'] as String? ?? val;
+          final val = item['value']?.toString() ?? '';
+          final rawName = item['name']?.toString() ?? val;
           final name = (val == 'default') ? 'Agent' : rawName;
-          final desc = item['description'] as String?;
+          final desc = item['description']?.toString();
           _models.add(_formatModelOption(val, name, desc));
         }
         model.options = List.of(_models);
@@ -995,10 +995,10 @@ class CodeBuddyKernel
         _permissions.clear();
         for (final item in items) {
           if (item is! Map) continue;
-          final val = item['value'] as String? ?? '';
+          final val = item['value']?.toString() ?? '';
           if (val == 'plan') continue;
-          final name = item['name'] as String? ?? val;
-          final desc = item['description'] as String? ?? '';
+          final name = item['name']?.toString() ?? val;
+          final desc = item['description']?.toString() ?? '';
           _permissions.add(
             KernelOption(
               val,
