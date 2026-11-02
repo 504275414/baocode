@@ -468,7 +468,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// channel build's setup first (lib/channel/).
   void _welcomeToModels() {
     // The channel build's model is its account's: no setting one up.
-    if (ChannelSetup.channelBuild) return;
+    if (ChannelSetup.channelBuild || _session.kernel.id == 'codebuddy') return;
     if (!_session.health.noModel || ModelWelcome.welcomed) return;
     if (ChannelSetup.current case final setup? when !setup.done) {
       if (_awaitingSetup) return;
@@ -1074,7 +1074,7 @@ class _ChatScreenState extends State<ChatScreen>
                             health: _session.health,
                             kernelName: _session.kernel.label,
                             onRetry: _session.restart,
-                            onSetUpModel: () =>
+                            onSetUpModel: _session.kernel.id == 'codebuddy' ? null : () =>
                                 unawaited(showModelWelcome(context)),
                           )
                         : null,

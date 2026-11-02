@@ -27,21 +27,35 @@ class CodeBuddyKernel
     this.context, {
     Future<CodeBuddyTransport> Function({String? cwd})? startTransport,
   }) : _startTransport = startTransport ?? ProcessCodeBuddyTransport.start {
+    final initialModel = context.settings[KernelChoiceKind.model.name];
+    final initialMode = context.settings[KernelChoiceKind.mode.name];
+    final initialPermission = context.settings[KernelChoiceKind.permission.name];
+    if (initialModel != null) _pendingModel = initialModel;
+    if (initialMode != null || initialPermission != null) {
+      final isPlan = initialMode == 'plan';
+      _pendingMode = isPlan ? 'plan' : (initialPermission ?? 'default');
+    }
+
     // Model choices
     model = LocalChoice(
       _models,
       onChanged: (id) => _onModelChanged(id),
     );
+    if (_pendingModel != null) model.reported = _pendingModel;
+
     // Working mode: Agent vs Plan
     mode = LocalChoice(
       _modes,
       onChanged: (id) => _onModeOrPermissionChanged(),
     );
+    if (initialMode != null) mode.reported = initialMode;
+
     // Approval ways (default / auto / acceptEdits / dontAsk / bypassPermissions)
     permission = LocalChoice(
       _permissions,
       onChanged: (id) => _onModeOrPermissionChanged(),
     );
+    if (initialPermission != null) permission.reported = initialPermission;
   }
 
   @override
@@ -68,6 +82,8 @@ class CodeBuddyKernel
   @override
   String? get sessionId => _sessionId;
   String? _sessionId;
+  String? _pendingModel;
+  String? _pendingMode;
 
   @override
   Future<void> get stopped => _stoppedCompleter.future;
@@ -250,8 +266,8 @@ class CodeBuddyKernel
           'protocolVersion': 1,
           'clientInfo': {'name': 'CodeBuddy IDE', 'version': '1.0.0'},
           'clientCapabilities': {
-            'fs': {'readTextFile': true, 'writeTextFile': true},
-            'terminal': true,
+            'fs': {'readTextFile': false, 'writeTextFile': false},
+            'terminal': false,
           },
         });
       }
@@ -263,6 +279,12 @@ class CodeBuddyKernel
 
       if (sessionResult['sessionId'] case final String sid) {
         _sessionId = sid;
+        if (_pendingModel case final targetModel?) {
+          unawaited(_request('session/set_model', {'sessionId': sid, 'modelId': targetModel}));
+        }
+        if (_pendingMode case final targetMode?) {
+          unawaited(_request('session/set_mode', {'sessionId': sid, 'modeId': targetMode}));
+        }
       }
 
       if (sessionResult['models'] case final Map modelsMap) {
@@ -328,7 +350,11 @@ class CodeBuddyKernel
         _models.add(_formatModelOption(modelId, name, desc));
       }
       model.options = List.of(_models);
-      if (currentModelId != null) model.reported = currentModelId;
+      if (_pendingModel != null) {
+        model.reported = _pendingModel;
+      } else if (currentModelId != null) {
+        model.reported = currentModelId;
+      }
       emit(KernelInfoChanged(nextSeq));
     }
   }
@@ -360,7 +386,7 @@ class CodeBuddyKernel
         );
       }
       permission.options = List.of(_permissions);
-      if (currentModeId != null) {
+      if (_pendingMode == null && currentModeId != null) {
         if (currentModeId == 'plan') {
           mode.reported = 'plan';
         } else {
@@ -491,6 +517,7 @@ class CodeBuddyKernel
   }
 
   void _onModelChanged(String modelId) {
+    _pendingModel = modelId;
     final sid = _sessionId;
     if (sid != null) {
       unawaited(_request('session/set_model', {'sessionId': sid, 'modelId': modelId}));
@@ -498,11 +525,13 @@ class CodeBuddyKernel
   }
 
   void _onModeOrPermissionChanged() {
-    final sid = _sessionId;
-    if (sid == null) return;
     final isPlan = mode.selected == 'plan';
     final targetMode = isPlan ? 'plan' : (permission.selected ?? 'default');
-    unawaited(_request('session/set_mode', {'sessionId': sid, 'modeId': targetMode}));
+    _pendingMode = targetMode;
+    final sid = _sessionId;
+    if (sid != null) {
+      unawaited(_request('session/set_mode', {'sessionId': sid, 'modeId': targetMode}));
+    }
   }
 
 

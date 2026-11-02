@@ -135,7 +135,10 @@ class WelcomeFrame extends StatelessWidget {
                 ),
               ),
               decoration: BoxDecoration(
-                color: themeColors.get('editorWidget.background') ?? AppColors.surfaceRaised,
+                color: ((themeColors.get('editorWidget.background')?.a ?? 0) > 0.05
+                    ? themeColors.get('editorWidget.background')
+                    : null) ??
+                    const Color(0xFF252526),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: border),
                 boxShadow: const [
