@@ -314,6 +314,11 @@ class CodeBuddyKernel
       if (sessionResult['modes'] case final Map modesMap) {
         _populateModesFromSessionResult(modesMap.cast<String, Object?>());
       }
+
+      if (sessionResult['configOptions'] case final List configList) {
+        _handleConfigOptions({'configOptions': configList});
+      }
+      emit(KernelInfoChanged(nextSeq));
     } catch (e) {
       health = KernelHealth(KernelHealthStatus.failed, message: e.toString());
       emit(KernelInfoChanged(nextSeq));
@@ -364,7 +369,8 @@ class CodeBuddyKernel
       _models.clear();
       for (final item in available) {
         if (item is! Map) continue;
-        final modelId = item['modelId'] as String? ?? '';
+        final modelId = (item['modelId'] ?? item['id']) as String? ?? '';
+        if (modelId.isEmpty) continue;
         final name = item['name'] as String? ?? modelId;
         final desc = item['description'] as String?;
         _models.add(_formatModelOption(modelId, name, desc));
@@ -494,12 +500,56 @@ class CodeBuddyKernel
               return;
             }
 
+            final params = (json['params'] as Map?)?.cast<String, Object?>() ?? {};
+            final toolName = params['name'] as String? ?? '';
+
+            // Check if it's a browser tool call and fail fast if no browser extension is connected
+            if (method == 'tools/call' &&
+                (toolName.contains('browser') || toolName.startsWith('browser_'))) {
+              if (BrowserBridge.instance.browsers.isEmpty) {
+                final response = {
+                  'jsonrpc': '2.0',
+                  'id': json['id'] ?? 0,
+                  'result': {
+                    'content': [
+                      {
+                        'type': 'text',
+                        'text': '未检测到已连接的浏览器。请先打开 Chrome 或 Edge 浏览器，并确保已在浏览器中启用 BaoCode 扩展。',
+                      }
+                    ],
+                    'isError': true,
+                  },
+                };
+                req.response
+                  ..statusCode = HttpStatus.ok
+                  ..headers.contentType = ContentType.json
+                  ..write(jsonEncode(response));
+                await req.response.close();
+                return;
+              }
+            }
+
             final response = await ClaudeSdkTools.handle(
               json,
               ClaudeSdkCall(
                 cwd: workingDir,
                 sessionId: _sessionId,
               ),
+            ).timeout(
+              const Duration(seconds: 20),
+              onTimeout: () => {
+                'jsonrpc': '2.0',
+                'id': json['id'] ?? 0,
+                'result': {
+                  'content': [
+                    {
+                      'type': 'text',
+                      'text': '操作执行耗时较长，网页可能正在加载或包含异步脚本。请重试或检查网页地址。',
+                    }
+                  ],
+                  'isError': true,
+                },
+              },
             );
 
             req.response
@@ -640,6 +690,7 @@ class CodeBuddyKernel
     if (sid != null) {
       unawaited(_request('session/set_model', {'sessionId': sid, 'modelId': modelId}));
     }
+    emit(KernelInfoChanged(nextSeq));
   }
 
   void _onModeOrPermissionChanged() {
@@ -650,6 +701,7 @@ class CodeBuddyKernel
     if (sid != null) {
       unawaited(_request('session/set_mode', {'sessionId': sid, 'modeId': targetMode}));
     }
+    emit(KernelInfoChanged(nextSeq));
   }
 
 
@@ -852,6 +904,12 @@ class CodeBuddyKernel
     switch (type) {
       case 'config_option_update':
         _handleConfigOptions(update);
+      case 'model_update':
+        _handleModelUpdate(update);
+      case 'mode_update':
+        _handleModeUpdate(update);
+      case 'current_mode_update':
+        _handleCurrentModeUpdate(update);
       case 'available_commands_update':
         _handleAvailableCommands(update);
       case 'usage_update':
@@ -870,6 +928,46 @@ class CodeBuddyKernel
         if (update['plan'] case final String planText) {
           emit(PlanWritten(nextSeq, planText));
         }
+    }
+  }
+
+  void _handleModelUpdate(Map<String, Object?> update) {
+    final available = update['availableModels'] as List<Object?>? ?? const [];
+    final currentModelId = update['currentModelId'] as String?;
+    if (available.isNotEmpty) {
+      _models.clear();
+      for (final item in available) {
+        if (item is! Map) continue;
+        final modelId = (item['modelId'] ?? item['id']) as String? ?? '';
+        if (modelId.isEmpty) continue;
+        final name = item['name'] as String? ?? modelId;
+        final desc = item['description'] as String?;
+        _models.add(_formatModelOption(modelId, name, desc));
+      }
+      model.options = List.of(_models);
+      if (_pendingModel != null) {
+        model.reported = _pendingModel;
+      } else if (currentModelId != null) {
+        model.reported = currentModelId;
+      }
+      emit(KernelInfoChanged(nextSeq));
+    }
+  }
+
+  void _handleModeUpdate(Map<String, Object?> update) {
+    _populateModesFromSessionResult(update);
+  }
+
+  void _handleCurrentModeUpdate(Map<String, Object?> update) {
+    if (update['currentModeId'] case final String modeId) {
+      _pendingMode = modeId;
+      if (modeId == 'plan') {
+        mode.reported = 'plan';
+      } else {
+        mode.reported = 'agent';
+        permission.reported = modeId;
+      }
+      emit(KernelInfoChanged(nextSeq));
     }
   }
 

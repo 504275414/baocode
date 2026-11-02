@@ -548,7 +548,7 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
     BrowserConnection browser,
     int tabId,
     Future<void> Function() go, {
-    Duration timeout = const Duration(seconds: 20),
+    Duration timeout = const Duration(seconds: 12),
   }) async {
     final loaded = Completer<void>();
     // Loaded, or stopped on its way: paused in the debugger (a breakpoint

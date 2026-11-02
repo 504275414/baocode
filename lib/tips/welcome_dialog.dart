@@ -18,7 +18,7 @@ Future<void> showWelcomeDialog(
   required WidgetBuilder builder,
 }) => showGeneralDialog<void>(
   context: context,
-  barrierDismissible: false,
+  barrierDismissible: true,
   barrierLabel: context.l10n.commonDismiss,
   barrierColor: const Color(0x59000000),
   transitionDuration: const Duration(milliseconds: 280),
