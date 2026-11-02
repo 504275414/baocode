@@ -63,3 +63,5 @@ app.*.map.json
 
 # npm dependencies of the extension host code generators.
 tool/exthost_codegen/node_modules/
+
+.atomcode/

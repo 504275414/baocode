@@ -2,11 +2,20 @@ import 'package:flutter/material.dart';
 
 import 'agent_kernel.dart';
 import 'claude_code/claude_code_kernel.dart';
+import 'code_buddy/code_buddy_kernel.dart';
 import '../remote/remote_claude.dart';
 
 /// The kernels the user can pick from. Another kernel is an adapter and a
 /// line here.
 abstract final class KernelRegistry {
+  static final KernelDescriptor codeBuddy = KernelDescriptor(
+    id: 'codebuddy',
+    label: 'CodeBuddy',
+    icon: Icons.smart_toy_rounded,
+    description: 'CodeBuddy AI coding assistant',
+    create: (context) => CodeBuddyKernel(codeBuddy, context),
+  );
+
   static final KernelDescriptor claudeCode = KernelDescriptor(
     id: 'claude-code',
     label: 'Claude Code',
@@ -26,7 +35,7 @@ abstract final class KernelRegistry {
     catalog: const ClaudeCatalog(),
   );
 
-  static List<KernelDescriptor> _all = [claudeCode];
+  static List<KernelDescriptor> _all = [codeBuddy, claudeCode];
 
   static List<KernelDescriptor> get all => _all;
 
