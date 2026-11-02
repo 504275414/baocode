@@ -12,23 +12,23 @@ KernelOption localizedKernelOption(
   KernelOption option,
 ) {
   final text = switch ((kernel, kind, option.id)) {
-    ('claude-code', KernelChoiceKind.permission, 'default') => (
+    ('claude-code' || 'codebuddy', KernelChoiceKind.permission, 'default') => (
       l10n.composerApprovalDefault,
       l10n.composerApprovalDefaultDetail,
     ),
-    ('claude-code', KernelChoiceKind.permission, 'acceptEdits') => (
+    ('claude-code' || 'codebuddy', KernelChoiceKind.permission, 'acceptEdits') => (
       l10n.composerApprovalAcceptEdits,
       l10n.composerApprovalAcceptEditsDetail,
     ),
-    ('claude-code', KernelChoiceKind.permission, 'auto') => (
+    ('claude-code' || 'codebuddy', KernelChoiceKind.permission, 'auto') => (
       l10n.composerApprovalAuto,
       l10n.composerApprovalAutoDetail,
     ),
-    ('claude-code', KernelChoiceKind.permission, 'dontAsk') => (
+    ('claude-code' || 'codebuddy', KernelChoiceKind.permission, 'dontAsk') => (
       l10n.composerApprovalDontAsk,
       l10n.composerApprovalDontAskDetail,
     ),
-    ('claude-code', KernelChoiceKind.permission, 'bypassPermissions') => (
+    ('claude-code' || 'codebuddy', KernelChoiceKind.permission, 'bypassPermissions') => (
       l10n.composerApprovalFullAccess,
       l10n.composerApprovalFullAccessDetail,
     ),

@@ -18,6 +18,7 @@ class CodeBuddyKernel
         AgentKernel,
         SelectsModel,
         SelectsMode,
+        SelectsPermission,
         ProvidesCommands,
         ReportsContext,
         AcceptsImages {
@@ -31,10 +32,15 @@ class CodeBuddyKernel
       _models,
       onChanged: (id) => _onModelChanged(id),
     );
-    // Permission modes
+    // Working mode: Agent vs Plan
     mode = LocalChoice(
       _modes,
-      onChanged: (id) => _onModeChanged(id),
+      onChanged: (id) => _onModeOrPermissionChanged(),
+    );
+    // Approval ways (default / auto / acceptEdits / dontAsk / bypassPermissions)
+    permission = LocalChoice(
+      _permissions,
+      onChanged: (id) => _onModeOrPermissionChanged(),
     );
   }
 
@@ -52,6 +58,9 @@ class CodeBuddyKernel
 
   @override
   late final LocalChoice mode;
+
+  @override
+  late final LocalChoice permission;
 
   @override
   KernelHealth health = KernelHealth.ready;
@@ -111,10 +120,31 @@ class CodeBuddyKernel
 
   final List<KernelOption> _modes = [
     const KernelOption(
-      'default',
+      'agent',
       'Agent',
+      Icons.smart_toy_outlined,
+      'Full agent mode with tool executions',
+    ),
+    const KernelOption(
+      'plan',
+      'Plan',
+      Icons.assignment_outlined,
+      'Analyze and propose plans without modifying files',
+    ),
+  ];
+
+  final List<KernelOption> _permissions = [
+    const KernelOption(
+      'default',
+      'Always Ask',
       Icons.lock_outline_rounded,
       'Prompts for permission on first use of each tool',
+    ),
+    const KernelOption(
+      'auto',
+      'Auto',
+      Icons.auto_mode_rounded,
+      'An AI reviewer checks and approves safe actions',
     ),
     const KernelOption(
       'acceptEdits',
@@ -123,10 +153,10 @@ class CodeBuddyKernel
       'Automatically accepts file edit permissions',
     ),
     const KernelOption(
-      'plan',
-      'Plan Mode',
-      Icons.assignment_outlined,
-      'Analyze but do not modify files or run commands',
+      'dontAsk',
+      "Don't Ask",
+      Icons.visibility_outlined,
+      'Pre-approved read actions run, other actions denied',
     ),
     const KernelOption(
       'bypassPermissions',
@@ -307,21 +337,21 @@ class CodeBuddyKernel
     final available = modesMap['availableModes'] as List<Object?>? ?? const [];
     final currentModeId = modesMap['currentModeId'] as String?;
     if (available.isNotEmpty) {
-      _modes.clear();
+      _permissions.clear();
       for (final item in available) {
         if (item is! Map) continue;
         final id = item['id'] as String? ?? '';
-        final rawName = item['name'] as String? ?? id;
-        final name = (id == 'default') ? 'Agent' : rawName;
+        if (id == 'plan') continue;
+        final name = item['name'] as String? ?? id;
         final desc = item['description'] as String? ?? '';
-        _modes.add(
+        _permissions.add(
           KernelOption(
             id,
             name,
             switch (id) {
-              'default' => Icons.smart_toy_rounded,
-                'acceptEdits' => Icons.edit_note_rounded,
-              'plan' => Icons.assignment_outlined,
+              'acceptEdits' => Icons.edit_note_rounded,
+              'auto' => Icons.auto_mode_rounded,
+              'dontAsk' => Icons.visibility_outlined,
               'bypassPermissions' => Icons.all_inclusive_rounded,
               _ => Icons.lock_outline_rounded,
             },
@@ -329,8 +359,15 @@ class CodeBuddyKernel
           ),
         );
       }
-      mode.options = List.of(_modes);
-      if (currentModeId != null) mode.reported = currentModeId;
+      permission.options = List.of(_permissions);
+      if (currentModeId != null) {
+        if (currentModeId == 'plan') {
+          mode.reported = 'plan';
+        } else {
+          mode.reported = 'agent';
+          permission.reported = currentModeId;
+        }
+      }
       emit(KernelInfoChanged(nextSeq));
     }
   }
@@ -460,11 +497,12 @@ class CodeBuddyKernel
     }
   }
 
-  void _onModeChanged(String modeId) {
+  void _onModeOrPermissionChanged() {
     final sid = _sessionId;
-    if (sid != null) {
-      unawaited(_request('session/set_mode', {'sessionId': sid, 'modeId': modeId}));
-    }
+    if (sid == null) return;
+    final isPlan = mode.selected == 'plan';
+    final targetMode = isPlan ? 'plan' : (permission.selected ?? 'default');
+    unawaited(_request('session/set_mode', {'sessionId': sid, 'modeId': targetMode}));
   }
 
 
@@ -618,20 +656,21 @@ class CodeBuddyKernel
         model.options = List.of(_models);
         if (currentVal != null) model.reported = currentVal;
       } else if (id == 'mode') {
-        _modes.clear();
+        _permissions.clear();
         for (final item in items) {
           if (item is! Map) continue;
           final val = item['value'] as String? ?? '';
-          final rawName = item['name'] as String? ?? val;
-          final name = (val == 'default') ? 'Agent' : rawName;
+          if (val == 'plan') continue;
+          final name = item['name'] as String? ?? val;
           final desc = item['description'] as String? ?? '';
-          _modes.add(
+          _permissions.add(
             KernelOption(
               val,
               name,
               switch (val) {
                 'acceptEdits' => Icons.edit_note_rounded,
-                'plan' => Icons.assignment_outlined,
+                'auto' => Icons.auto_mode_rounded,
+                'dontAsk' => Icons.visibility_outlined,
                 'bypassPermissions' => Icons.all_inclusive_rounded,
                 _ => Icons.lock_outline_rounded,
               },
@@ -639,8 +678,15 @@ class CodeBuddyKernel
             ),
           );
         }
-        mode.options = List.of(_modes);
-        if (currentVal != null) mode.reported = currentVal;
+        permission.options = List.of(_permissions);
+        if (currentVal != null) {
+          if (currentVal == 'plan') {
+            mode.reported = 'plan';
+          } else {
+            mode.reported = 'agent';
+            permission.reported = currentVal;
+          }
+        }
       }
     }
     emit(KernelInfoChanged(nextSeq));
