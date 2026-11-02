@@ -402,7 +402,7 @@ class _Mark extends StatelessWidget {
                         color: green,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: themeColors['editorWidget.background'],
+                          color: themeColors.get('editorWidget.background') ?? AppColors.surfaceRaised,
                           width: 2,
                         ),
                       ),

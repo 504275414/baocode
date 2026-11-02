@@ -148,7 +148,7 @@ class SessionModelPicker extends StatelessWidget {
     final model = session.models;
     final l10n = context.l10n;
     if (model == null) {
-      if (!session.health.noModel) return const SizedBox.shrink();
+      if (session.kernel.id == 'codebuddy' || !session.health.noModel) return const SizedBox.shrink();
       return _SetUpPill(
         label: l10n.modelSetUp,
         onTap: () => unawaited(showModelWelcome(context)),
@@ -180,7 +180,8 @@ class SessionModelPicker extends StatelessWidget {
       menuWidth: 260,
       searchPlaceholder: l10n.modelsSearch,
       footers: [
-        if (SettingsOpener.maybeOf(context) case final open?)
+        if (session.kernel.id != 'codebuddy')
+          if (SettingsOpener.maybeOf(context) case final open?)
           (
             label: ChannelSetup.channelBuild
                 ? l10n.channelAccountTitle

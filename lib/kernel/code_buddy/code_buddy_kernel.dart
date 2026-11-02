@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -204,7 +205,12 @@ class CodeBuddyKernel
 
   Future<void> _connect() async {
     try {
-      final transport = await _startTransport(cwd: context.cwd);
+      String workingDir = context.cwd ?? '';
+      if (workingDir.trim().isEmpty || !Directory(workingDir).existsSync()) {
+        workingDir = Directory.current.path;
+      }
+
+      final transport = await _startTransport(cwd: workingDir);
       _transport = transport;
       _subscription = transport.messages.listen(_receive, onDone: _onDisconnected);
 
@@ -220,7 +226,6 @@ class CodeBuddyKernel
         });
       }
 
-      final workingDir = context.cwd ?? '';
       final sessionResult = await _request('session/new', {
         'cwd': workingDir.replaceAll(r'\', '/'),
         'mcpServers': <Object>[],
@@ -340,13 +345,20 @@ class CodeBuddyKernel
 
   Future<Map<String, Object?>> _request(
     String method,
-    Map<String, Object?> params,
-  ) {
+    Map<String, Object?> params, {
+    Duration timeout = const Duration(seconds: 15),
+  }) {
     final id = ++_requests;
     final response = Completer<Map<String, Object?>>();
     _responses[id] = response;
     _transport?.write({'jsonrpc': '2.0', 'id': id, 'method': method, 'params': params});
-    return response.future;
+    return response.future.timeout(
+      timeout,
+      onTimeout: () {
+        _responses.remove(id);
+        throw TimeoutException('Request $method timed out after $timeout');
+      },
+    );
   }
 
   void _notify(String method, Map<String, Object?> params) {

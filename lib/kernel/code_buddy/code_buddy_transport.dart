@@ -95,15 +95,39 @@ class ProcessCodeBuddyTransport implements CodeBuddyTransport {
     }
   }
 
+  /// Resolves the codebuddy executable, taking care of Windows npm global paths.
+  static String resolveExecutable() {
+    if (Platform.isWindows) {
+      final appData = Platform.environment['APPDATA'];
+      if (appData != null) {
+        final npmCmd = '$appData\\npm\\codebuddy.cmd';
+        if (File(npmCmd).existsSync()) return npmCmd;
+      }
+      final localAppData = Platform.environment['LOCALAPPDATA'];
+      if (localAppData != null) {
+        final localCmd = '$localAppData\\Programs\\CodeBuddy\\codebuddy.cmd';
+        if (File(localCmd).existsSync()) return localCmd;
+      }
+    }
+    return 'codebuddy';
+  }
+
   /// Starts `codebuddy --acp` child process with optional working directory.
   static Future<CodeBuddyTransport> start({String? cwd}) async {
+    String? validCwd = cwd;
+    if (validCwd != null && (validCwd.trim().isEmpty || !Directory(validCwd).existsSync())) {
+      validCwd = null;
+    }
+
+    final executable = resolveExecutable();
+    debugPrint('[CodeBuddy starting] exe: $executable, cwd: $validCwd');
+
     final process = await Process.start(
-      'codebuddy',
+      executable,
       ['--acp'],
-      workingDirectory: cwd,
+      workingDirectory: validCwd,
       runInShell: Platform.isWindows,
     );
     return ProcessCodeBuddyTransport(process);
   }
 }
-
