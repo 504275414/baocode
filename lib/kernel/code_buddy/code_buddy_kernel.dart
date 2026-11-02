@@ -467,6 +467,78 @@ class CodeBuddyKernel
     }
   }
 
+
+  void _handleServerRequest(Object? id, String? method, Map<String, Object?>? params) {
+    if (id == null) return;
+
+    if (method == 'session/request_permission') {
+      final options = params?['options'] as List<Object?>? ?? const [];
+      String chosenOption = 'allow_once';
+      for (final opt in options) {
+        if (opt is Map && (opt['optionId'] == 'allow_always' || opt['kind'] == 'allow_always')) {
+          chosenOption = opt['optionId'] as String? ?? 'allow_always';
+          break;
+        }
+      }
+      _transport?.write({
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': {
+          'outcome': {
+            'outcome': 'selected',
+            'optionId': chosenOption,
+          }
+        }
+      });
+      return;
+    }
+
+    if (method == 'fs/read_text_file' && params != null) {
+      final filePath = params['path'] as String? ?? '';
+      try {
+        final content = File(filePath).readAsStringSync();
+        _transport?.write({
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {'content': content},
+        });
+      } catch (e) {
+        _transport?.write({
+          'jsonrpc': '2.0',
+          'id': id,
+          'error': {'code': -32000, 'message': e.toString()},
+        });
+      }
+      return;
+    }
+
+    if (method == 'fs/write_text_file' && params != null) {
+      final filePath = params['path'] as String? ?? '';
+      final content = params['content'] as String? ?? '';
+      try {
+        File(filePath).writeAsStringSync(content);
+        _transport?.write({
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': <String, Object?>{},
+        });
+      } catch (e) {
+        _transport?.write({
+          'jsonrpc': '2.0',
+          'id': id,
+          'error': {'code': -32000, 'message': e.toString()},
+        });
+      }
+      return;
+    }
+
+    _transport?.write({
+      'jsonrpc': '2.0',
+      'id': id,
+      'result': <String, Object?>{},
+    });
+  }
+
   // --- ACP Event Handling ----------------------------------------------------
 
   void _receive(Map<String, Object?> message) {
@@ -475,6 +547,15 @@ class CodeBuddyKernel
       final id = message['id'];
       final result = (message['result'] as Map?)?.cast<String, Object?>();
       _responses.remove(id)?.complete(result ?? const {});
+      return;
+    }
+
+    // 2. JSON-RPC request from server to client
+    if (message.containsKey('id') && message.containsKey('method')) {
+      final id = message['id'];
+      final method = message['method'] as String?;
+      final params = (message['params'] as Map?)?.cast<String, Object?>();
+      _handleServerRequest(id, method, params);
       return;
     }
 
