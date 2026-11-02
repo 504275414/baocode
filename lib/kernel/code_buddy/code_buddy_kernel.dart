@@ -112,6 +112,7 @@ class CodeBuddyKernel
 
   /// Pending approvals: requestId -> interruptionId
   final Map<String, String> _approvals = {};
+  final Map<String, _PendingPermissionRequest> _pendingRpcApprovals = {};
 
   final List<KernelOption> _models = [
     const KernelOption(
@@ -489,11 +490,47 @@ class CodeBuddyKernel
     if (sid != null) {
       _notify('session/cancel', {'sessionId': sid});
     }
+    for (final entry in _pendingRpcApprovals.entries) {
+      emit(InteractionResolved(nextSeq, entry.key));
+      _transport?.write({
+        'jsonrpc': '2.0',
+        'id': entry.value.rpcId,
+        'result': {
+          'outcome': {
+            'outcome': 'cancelled',
+          }
+        }
+      });
+    }
+    _pendingRpcApprovals.clear();
     _endTurn(turn, interrupted: true);
   }
 
   @override
   void answer(String requestId, InteractionAnswer answer) {
+    if (_pendingRpcApprovals.remove(requestId) case final req?) {
+      emit(InteractionResolved(nextSeq, requestId));
+      final selectedOptionId = switch (answer) {
+        ApprovalAnswer(decision: ApprovalDecision.allowAlways) =>
+          req.allowAlwaysOptionId ?? req.allowOnceOptionId,
+        ApprovalAnswer(decision: ApprovalDecision.allowOnce) =>
+          req.allowOnceOptionId,
+        _ => req.denyOptionId,
+      };
+
+      _transport?.write({
+        'jsonrpc': '2.0',
+        'id': req.rpcId,
+        'result': {
+          'outcome': {
+            'outcome': 'selected',
+            'optionId': selectedOptionId,
+          }
+        }
+      });
+      return;
+    }
+
     final interruptionId = _approvals.remove(requestId);
     if (interruptionId == null) return;
     final sid = _sessionId;
@@ -540,23 +577,114 @@ class CodeBuddyKernel
 
     if (method == 'session/request_permission') {
       final options = params?['options'] as List<Object?>? ?? const [];
-      String chosenOption = 'allow_once';
+      final toolCall = params?['toolCall'] as Map<String, Object?>?;
+      final rawInput = toolCall?['rawInput'] as Map<String, Object?>? ?? const {};
+      final meta = toolCall?['_meta'] as Map<String, Object?>? ?? const {};
+      final toolName = meta['codebuddy.ai/toolName'] as String? ?? 'Tool';
+
+      String allowOnceId = 'allow_once';
+      String? allowAlwaysId;
+      String denyId = 'deny';
+
       for (final opt in options) {
-        if (opt is Map && (opt['optionId'] == 'allow_always' || opt['kind'] == 'allow_always')) {
-          chosenOption = opt['optionId'] as String? ?? 'allow_always';
-          break;
-        }
-      }
-      _transport?.write({
-        'jsonrpc': '2.0',
-        'id': id,
-        'result': {
-          'outcome': {
-            'outcome': 'selected',
-            'optionId': chosenOption,
+        if (opt is Map) {
+          final oid = opt['optionId'] as String? ?? '';
+          final kind = opt['kind'] as String? ?? '';
+          if (oid == 'allow_always' || oid == 'allow_session') {
+            allowAlwaysId = oid;
+          } else if (kind == 'allow' || oid == 'allow' || oid == 'allow_once') {
+            allowOnceId = oid;
+          } else if (kind == 'reject' || oid == 'deny' || oid == 'reject') {
+            denyId = oid;
           }
         }
-      });
+      }
+
+      // If in bypass mode, auto-approve immediately
+      if (permission.selected == 'bypassPermissions') {
+        _transport?.write({
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {
+            'outcome': {
+              'outcome': 'selected',
+              'optionId': allowAlwaysId ?? allowOnceId,
+            }
+          }
+        });
+        return;
+      }
+
+      // If in dontAsk mode, auto-deny immediately
+      if (permission.selected == 'dontAsk') {
+        _transport?.write({
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {
+            'outcome': {
+              'outcome': 'selected',
+              'optionId': denyId,
+            }
+          }
+        });
+        return;
+      }
+
+      // If in acceptEdits mode and tool is Edit/Write, auto-approve
+      if (permission.selected == 'acceptEdits' && (toolName == 'Edit' || toolName == 'Write')) {
+        _transport?.write({
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {
+            'outcome': {
+              'outcome': 'selected',
+              'optionId': allowOnceId,
+            }
+          }
+        });
+        return;
+      }
+
+      // Otherwise, prompt user via interaction card
+      final command = rawInput['command'] as String?;
+      final filePath = (rawInput['path'] ?? rawInput['filePath'] ?? rawInput['file_path']) as String?;
+      final ApprovalPreview? preview = switch (command) {
+        final cmd? when cmd.isNotEmpty => CommandPreview(cmd),
+        _ => switch (filePath) {
+          final path? when path.isNotEmpty => TextPreview(path),
+          _ => null,
+        },
+      };
+
+      final title = switch (command) {
+        final cmd? when cmd.isNotEmpty => '运行命令 $cmd？',
+        _ => switch (filePath) {
+          final path? when path.isNotEmpty => '操作文件 $path？',
+          _ => '允许使用 $toolName？',
+        },
+      };
+
+      final reqId = 'rpc_approval:$id';
+      _pendingRpcApprovals[reqId] = _PendingPermissionRequest(
+        rpcId: id,
+        allowOnceOptionId: allowOnceId,
+        allowAlwaysOptionId: allowAlwaysId,
+        denyOptionId: denyId,
+      );
+
+      emit(
+        InteractionRequested(
+          nextSeq,
+          ApprovalRequest(
+            id: reqId,
+            title: title,
+            toolName: toolName,
+            reason: rawInput['description'] as String?,
+            preview: preview,
+            alwaysAllowLabel: allowAlwaysId != null ? '在当前会话中始终允许' : null,
+          ),
+        ),
+      );
       return;
     }
 
@@ -934,6 +1062,20 @@ class CodeBuddyKernel
     _closeThoughtIfOpen();
     _closeMessageIfOpen();
 
+    for (final entry in _pendingRpcApprovals.entries) {
+      emit(InteractionResolved(nextSeq, entry.key));
+      _transport?.write({
+        'jsonrpc': '2.0',
+        'id': entry.value.rpcId,
+        'result': {
+          'outcome': {
+            'outcome': 'cancelled',
+          }
+        }
+      });
+    }
+    _pendingRpcApprovals.clear();
+
     for (final id in _approvals.keys) {
       emit(InteractionResolved(nextSeq, id));
     }
@@ -951,4 +1093,18 @@ class CodeBuddyKernel
       ),
     );
   }
+}
+
+class _PendingPermissionRequest {
+  const _PendingPermissionRequest({
+    required this.rpcId,
+    required this.allowOnceOptionId,
+    required this.denyOptionId,
+    this.allowAlwaysOptionId,
+  });
+
+  final Object rpcId;
+  final String allowOnceOptionId;
+  final String? allowAlwaysOptionId;
+  final String denyOptionId;
 }
