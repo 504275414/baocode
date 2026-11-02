@@ -111,7 +111,7 @@ class CodeBuddyKernel
   final List<KernelOption> _modes = [
     const KernelOption(
       'default',
-      'Always Ask',
+      'Agent',
       Icons.lock_outline_rounded,
       'Prompts for permission on first use of each tool',
     ),
@@ -246,6 +246,40 @@ class CodeBuddyKernel
     }
   }
 
+  KernelOption _formatModelOption(
+    String modelId,
+    String rawName,
+    String? rawDesc,
+  ) {
+    String label;
+    String desc = rawDesc ?? '';
+
+    if (modelId.startsWith('custom-local:')) {
+      final localId = modelId.substring('custom-local:'.length);
+      if (rawName.toLowerCase() == localId.toLowerCase()) {
+        label = rawName;
+      } else {
+        // Match CodeBuddy's official format: name:id (e.g. GLM:glm53, deepseek:v4-flash)
+        label = '$rawName:$localId';
+      }
+      if (desc.isEmpty || desc == 'null') {
+        desc = 'Custom Model';
+      }
+    } else {
+      label = rawName;
+      if (modelId == 'hy3-x' && rawName == 'Hy3') {
+        label = 'Hy3-X';
+      }
+    }
+
+    return KernelOption(
+      modelId,
+      label,
+      Icons.bolt_rounded,
+      desc,
+    );
+  }
+
   void _populateModelsFromSessionResult(Map<String, Object?> modelsMap) {
     final available = modelsMap['availableModels'] as List<Object?>? ?? const [];
     final currentModelId = modelsMap['currentModelId'] as String?;
@@ -255,8 +289,8 @@ class CodeBuddyKernel
         if (item is! Map) continue;
         final modelId = item['modelId'] as String? ?? '';
         final name = item['name'] as String? ?? modelId;
-        final desc = item['description'] as String? ?? '';
-        _models.add(KernelOption(modelId, name, Icons.bolt_rounded, desc));
+        final desc = item['description'] as String?;
+        _models.add(_formatModelOption(modelId, name, desc));
       }
       model.options = List.of(_models);
       if (currentModelId != null) model.reported = currentModelId;
@@ -272,14 +306,16 @@ class CodeBuddyKernel
       for (final item in available) {
         if (item is! Map) continue;
         final id = item['id'] as String? ?? '';
-        final name = item['name'] as String? ?? id;
+        final rawName = item['name'] as String? ?? id;
+        final name = (id == 'default') ? 'Agent' : rawName;
         final desc = item['description'] as String? ?? '';
         _modes.add(
           KernelOption(
             id,
             name,
             switch (id) {
-              'acceptEdits' => Icons.edit_note_rounded,
+              'default' => Icons.smart_toy_rounded,
+                'acceptEdits' => Icons.edit_note_rounded,
               'plan' => Icons.assignment_outlined,
               'bypassPermissions' => Icons.all_inclusive_rounded,
               _ => Icons.lock_outline_rounded,
@@ -481,16 +517,10 @@ class CodeBuddyKernel
         for (final item in items) {
           if (item is! Map) continue;
           final val = item['value'] as String? ?? '';
-          final name = item['name'] as String? ?? val;
-          final desc = item['description'] as String? ?? '';
-          _models.add(
-            KernelOption(
-              val,
-              name,
-              Icons.bolt_rounded,
-              desc,
-            ),
-          );
+          final rawName = item['name'] as String? ?? val;
+          final name = (val == 'default') ? 'Agent' : rawName;
+          final desc = item['description'] as String?;
+          _models.add(_formatModelOption(val, name, desc));
         }
         model.options = List.of(_models);
         if (currentVal != null) model.reported = currentVal;
@@ -499,7 +529,8 @@ class CodeBuddyKernel
         for (final item in items) {
           if (item is! Map) continue;
           final val = item['value'] as String? ?? '';
-          final name = item['name'] as String? ?? val;
+          final rawName = item['name'] as String? ?? val;
+          final name = (val == 'default') ? 'Agent' : rawName;
           final desc = item['description'] as String? ?? '';
           _modes.add(
             KernelOption(
