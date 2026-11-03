@@ -156,4 +156,68 @@ void main() {
 
     kernel.dispose();
   });
+
+  test('CodeBuddyKernel preserves tool call metadata and handles cancellation gracefully', () async {
+    final mockTransport = MockCodeBuddyTransport();
+    final kernel = CodeBuddyKernel(
+      KernelRegistry.codeBuddy,
+      const KernelContext(cwd: '/test/workspace'),
+      startTransport: ({cwd}) async => mockTransport,
+    );
+
+    final events = <KernelEvent>[];
+    kernel.events.listen(events.add);
+
+    kernel.prepare();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    // Send turn
+    kernel.send(const KernelTurn(id: 'turn-tools', text: 'Run tool'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // Simulate tool_call
+    mockTransport._controller.add({
+      'jsonrpc': '2.0',
+      'method': 'session/update',
+      'params': {
+        'sessionId': 'test-session-123',
+        'update': {
+          'sessionUpdate': 'tool_call',
+          'toolCallId': 'call_1',
+          'toolName': 'read_file',
+          'title': 'Read test.dart',
+          'kind': 'read',
+        },
+      },
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // Simulate tool_call_update
+    mockTransport._controller.add({
+      'jsonrpc': '2.0',
+      'method': 'session/update',
+      'params': {
+        'sessionId': 'test-session-123',
+        'update': {
+          'sessionUpdate': 'tool_call_update',
+          'toolCallId': 'call_1',
+          'status': 'completed',
+          'toolResult': 'file contents',
+        },
+      },
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // Verify tool metadata is preserved
+    final completedToolEvents = events.whereType<ItemCompleted>().where((e) => e.id == 'call_1').toList();
+    expect(completedToolEvents, isNotEmpty);
+    final completedTool = completedToolEvents.first.item as ToolCallItem;
+    expect(completedTool.kind, ToolKind.read);
+    expect(completedTool.target, 'Read test.dart');
+    expect(completedTool.tool, 'read_file');
+    expect(completedTool.status, ToolStatus.succeeded);
+    expect(completedTool.output, 'file contents');
+
+    kernel.dispose();
+  });
 }

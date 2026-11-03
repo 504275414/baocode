@@ -113,6 +113,9 @@ class CodeBuddyKernel
   String? _currentMessageId;
   StringBuffer? _messageBuffer;
 
+  /// Running tool calls awaiting completion: callId -> ToolCallItem
+  final Map<String, ToolCallItem> _runningTools = {};
+
   /// Pending approvals: requestId -> interruptionId
   final Map<String, String> _approvals = {};
   final Map<String, _PendingPermissionRequest> _pendingRpcApprovals = {};
@@ -549,7 +552,7 @@ class CodeBuddyKernel
                 sessionId: _sessionId,
               ),
             ).timeout(
-              const Duration(seconds: 20),
+              const Duration(seconds: 60),
               onTimeout: () => {
                 'jsonrpc': '2.0',
                 'id': json['id'] ?? 0,
@@ -626,6 +629,13 @@ class CodeBuddyKernel
     } catch (e, st) {
       debugPrint('CodeBuddy _executeTurn error: $e\n$st');
       if (_turn == turn.id) {
+        emit(
+          ItemUpserted(
+            nextSeq,
+            'err_${DateTime.now().millisecondsSinceEpoch}',
+            NoticeItem(NoticeKind.error, 'CodeBuddy 执行失败: $e'),
+          ),
+        );
         _endTurn(turn.id, interrupted: true);
       }
     }
@@ -1087,6 +1097,8 @@ class CodeBuddyKernel
   }
 
   void _handleThoughtChunk(Map<String, Object?> update) {
+    _closeMessageIfOpen();
+
     final content = update['content'] as Map?;
     final text = content?['text'] as String? ?? '';
     if (text.isEmpty) return;
@@ -1181,6 +1193,7 @@ class CodeBuddyKernel
 
   void _handleToolCall(Map<String, Object?> update) {
     _closeThoughtIfOpen();
+    _closeMessageIfOpen();
 
     final callId = update['toolCallId'] as String? ?? 'tool_${DateTime.now().millisecondsSinceEpoch}';
     final toolName = update['toolName'] as String? ?? 'Tool';
@@ -1196,17 +1209,20 @@ class CodeBuddyKernel
       _ => ToolKind.other,
     };
 
+    final item = ToolCallItem(
+      kind: kind,
+      target: title,
+      tool: toolName,
+      callId: callId,
+      status: ToolStatus.running,
+    );
+    _runningTools[callId] = item;
+
     emit(
       ItemUpserted(
         nextSeq,
         callId,
-        ToolCallItem(
-          kind: kind,
-          target: title,
-          tool: toolName,
-          callId: callId,
-          status: ToolStatus.running,
-        ),
+        item,
       ),
     );
   }
@@ -1223,17 +1239,21 @@ class CodeBuddyKernel
     };
 
     final result = update['toolResult']?.toString() ?? update['rawOutput']?.toString();
+    final prev = _runningTools.remove(callId);
+    final completedItem = ToolCallItem(
+      kind: prev?.kind ?? ToolKind.other,
+      target: prev?.target ?? callId,
+      tool: prev?.tool ?? 'Tool',
+      callId: callId,
+      status: status,
+      output: result,
+    );
 
     emit(
       ItemCompleted(
         nextSeq,
         callId,
-        item: ToolCallItem(
-          kind: ToolKind.other,
-          target: callId,
-          status: status,
-          output: result,
-        ),
+        item: completedItem,
       ),
     );
   }
@@ -1265,6 +1285,24 @@ class CodeBuddyKernel
     _turn = null;
     _closeThoughtIfOpen();
     _closeMessageIfOpen();
+
+    for (final entry in _runningTools.entries) {
+      emit(
+        ItemCompleted(
+          nextSeq,
+          entry.key,
+          item: ToolCallItem(
+            kind: entry.value.kind,
+            target: entry.value.target,
+            tool: entry.value.tool,
+            callId: entry.key,
+            status: ToolStatus.failed,
+            output: interrupted ? 'Cancelled' : null,
+          ),
+        ),
+      );
+    }
+    _runningTools.clear();
 
     for (final entry in _pendingRpcApprovals.entries) {
       emit(InteractionResolved(nextSeq, entry.key));
