@@ -429,25 +429,38 @@ class CodeBuddyKernel
       KernelHealthStatus.failed,
       message: 'CodeBuddy process disconnected',
     );
+    for (final response in _responses.values) {
+      if (!response.isCompleted) {
+        response.completeError(StateError('CodeBuddy process disconnected'));
+      }
+    }
+    _responses.clear();
+    final turn = _turn;
+    if (turn != null) {
+      _endTurn(turn, interrupted: true);
+    }
     emit(KernelInfoChanged(nextSeq));
   }
 
   Future<Map<String, Object?>> _request(
     String method,
     Map<String, Object?> params, {
-    Duration timeout = const Duration(seconds: 15),
+    Duration? timeout = const Duration(seconds: 30),
   }) {
     final id = ++_requests;
     final response = Completer<Map<String, Object?>>();
     _responses[id] = response;
     _transport?.write({'jsonrpc': '2.0', 'id': id, 'method': method, 'params': params});
-    return response.future.timeout(
-      timeout,
-      onTimeout: () {
-        _responses.remove(id);
-        throw TimeoutException('Request $method timed out after $timeout');
-      },
-    );
+    if (timeout != null) {
+      return response.future.timeout(
+        timeout,
+        onTimeout: () {
+          _responses.remove(id);
+          throw TimeoutException('Request $method timed out after $timeout');
+        },
+      );
+    }
+    return response.future;
   }
 
   void _notify(String method, Map<String, Object?> params) {
@@ -597,16 +610,21 @@ class CodeBuddyKernel
           },
       ];
 
-      final res = await _request('session/prompt', {
-        'sessionId': sid,
-        'prompt': promptBlocks,
-      });
+      final res = await _request(
+        'session/prompt',
+        {
+          'sessionId': sid,
+          'prompt': promptBlocks,
+        },
+        timeout: null,
+      );
 
       // Prompt completed successfully
       if (_turn == turn.id) {
         _endTurn(turn.id, interrupted: res['stopReason'] == 'cancelled');
       }
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('CodeBuddy _executeTurn error: $e\n$st');
       if (_turn == turn.id) {
         _endTurn(turn.id, interrupted: true);
       }
@@ -873,6 +891,13 @@ class CodeBuddyKernel
     // 1. JSON-RPC response to a pending request
     if (message.containsKey('id') && !message.containsKey('method')) {
       final id = message['id'];
+      if (message.containsKey('error')) {
+        final error = message['error'];
+        _responses.remove(id)?.completeError(
+          StateError('RPC error for request $id: $error'),
+        );
+        return;
+      }
       final result = (message['result'] as Map?)?.cast<String, Object?>();
       _responses.remove(id)?.complete(result ?? const {});
       return;
