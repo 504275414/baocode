@@ -1788,6 +1788,34 @@ void main() {
           'updatedInput': command,
         });
       }
+      // A question no one would answer: asked in its words instead.
+      cli.push({
+        'type': 'control_request',
+        'request_id': 'q',
+        'request': {
+          'subtype': 'can_use_tool',
+          'tool_name': 'AskUserQuestion',
+          'input': {
+            'questions': [
+              {
+                'question': 'Which language?',
+                'header': 'Language',
+                'options': [
+                  {'label': 'English'},
+                  {'label': 'Chinese'},
+                ],
+              },
+            ],
+          },
+        },
+      });
+      await pumpEventQueue();
+      expect(transcript.pendingInteraction, isNull);
+      expect(cli.responses.last['behavior'], 'deny');
+      expect(
+        cli.responses.last['message'],
+        contains('Ask them in your reply instead'),
+      );
       kernel.dispose();
     });
 
@@ -5212,6 +5240,21 @@ void main() {
     expect(at, isNot(-1));
     expect(arguments[at + 1], contains(ClaudeLaunch.citingCode));
     expect(ClaudeLaunch.citingCode, contains('```startLine:endLine:filepath'));
+  });
+
+  test('some of Claude Code\'s tools: the app\'s MCP servers alone, or the '
+      'user\'s too', () {
+    List<String> arguments({bool userServers = false}) => ClaudeLaunch(
+      cwd: '/p',
+      tools: const ['Bash', 'Read'],
+      userServers: userServers,
+    ).arguments;
+    final only = arguments();
+    expect(only[only.indexOf('--tools') + 1], 'Bash,Read');
+    expect(only, contains('--strict-mcp-config'));
+    final theirs = arguments(userServers: true);
+    expect(theirs[theirs.indexOf('--tools') + 1], 'Bash,Read');
+    expect(theirs, isNot(contains('--strict-mcp-config')));
   });
 
   group('commit attribution', () {

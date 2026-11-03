@@ -614,6 +614,7 @@ class ClaudeCodeKernel
           instructions: workspace?.instructions,
           ownPrompt: workspace?.ownPrompt ?? false,
           tools: workspace?.tools,
+          userServers: workspace?.userServers ?? false,
           allowed: workspace?.allowedTools ?? const [],
           models: switch (custom) {
             (final provider, _) => _requestedModels(provider),
@@ -631,6 +632,9 @@ class ClaudeCodeKernel
               record: (call, {trace}) =>
                   UsageLedger.current.record(call, trace: trace),
               tracing: () => UsageLedger.current.trace,
+              underway: (key, progress) => progress == null
+                  ? UsageLedger.current.end(key)
+                  : UsageLedger.current.begin(key, progress),
               makeup: () => _contextDetail,
               session: () => _sessionId,
               providerName: 'Claude Code',
@@ -1613,6 +1617,16 @@ class ClaudeCodeKernel
       _control!.respond(requestId, {
         'behavior': 'deny',
         'message': ClaudeTranslator.planPresented,
+      });
+      return;
+    }
+    // Where no one is there to answer a question either (a bot's,
+    // KernelWorkspace.approvesAll: the user reads its messages alone, on
+    // their phone), it would wait for ever: asked in its words instead.
+    if (tool == 'AskUserQuestion' && (_workspace?.approvesAll ?? false)) {
+      _control!.respond(requestId, {
+        'behavior': 'deny',
+        'message': _askInWords,
       });
       return;
     }
@@ -3405,6 +3419,12 @@ class ClaudeCodeKernel
   static const _askEndedNote =
       '<system-reminder>The user has left Ask mode: you may now edit files '
       'and run commands as the task needs.</system-reminder>';
+
+  /// The answer to a question where no one can answer it.
+  static const _askInWords =
+      'The user cannot see or answer this tool here: they only read your '
+      'messages. Ask them in your reply instead, briefly, and wait for '
+      'their answer.';
 
   /// The answer to what would be asked in Don't ask.
   static const _notAsked =

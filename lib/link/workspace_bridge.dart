@@ -210,6 +210,7 @@ class WorkspaceBridge {
             path: project.root,
             branch: branchOf?.call(project),
             icon: workspace.iconOf(project)?.toJson(),
+            pinned: workspace.isPinnedProject(project),
           ),
       ],
       sessions: [
@@ -303,6 +304,11 @@ class WorkspaceBridge {
   static final Map<String, Future<Object?>> _taken = {};
   static const _takenKept = 200;
 
+  /// Where the user writes to [thread] from, as its agent is told: the
+  /// phone; for a bot, nothing (its prompt has it so already).
+  UserPlace? _from(AgentThread thread) =>
+      bots?.botAt(thread.project.path) == null ? UserPlace.phone : null;
+
   /// Sends [params]' message ([LinkMethods.send]).
   Future<Object?> _send(Map<String, Object?> params) async {
     final text = (params['text'] as String? ?? '').trim();
@@ -327,7 +333,11 @@ class WorkspaceBridge {
     if (!session.canSend) {
       throw const LinkRemoteException('busy', 'The agent is at work');
     }
-    session.send(_message(thread, params), now: params['now'] == true);
+    session.send(
+      _message(thread, params),
+      now: params['now'] == true,
+      from: _from(thread),
+    );
     return {'session': idOf(thread)};
   }
 
@@ -408,7 +418,7 @@ class WorkspaceBridge {
         }
         final message = _message(thread, params);
         if (message.isEmpty) return null;
-        session.editMessage(index, message);
+        session.editMessage(index, message, from: _from(thread));
         return null;
       case LinkMethods.stop:
         _thread(params['session']).session.stop();
@@ -470,6 +480,12 @@ class WorkspaceBridge {
       case LinkMethods.pin:
         workspace.setPinned(
           _thread(params['session']),
+          params['pinned'] == true,
+        );
+        return null;
+      case LinkMethods.pinProject:
+        workspace.setPinnedProject(
+          _project(params['project']),
           params['pinned'] == true,
         );
         return null;

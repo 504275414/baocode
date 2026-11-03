@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/proxy/model_proxy.dart';
+import 'package:baocode/models/proxy/watched_socket.dart';
 import 'package:baocode/usage/usage_capture.dart';
 import 'package:baocode/usage/usage_ledger.dart';
 import 'package:baocode/usage/usage_record.dart';
@@ -11,19 +13,31 @@ import 'package:flutter_test/flutter_test.dart';
 /// An upstream on this machine (never a real API): answers with [reply],
 /// and keeps the headers it was asked with.
 class _Upstream {
-  _Upstream._(this._server);
+  _Upstream._(this._sockets) : _server = HttpServer.listenOn(_sockets);
 
   static Future<_Upstream> start() async {
     final upstream = _Upstream._(
-      await HttpServer.bind(InternetAddress.loopbackIPv4, 0),
+      await WatchedServerSocket.bind(InternetAddress.loopbackIPv4, 0),
     );
     upstream._server.listen(upstream._handle);
     return upstream;
   }
 
+  final WatchedServerSocket _sockets;
   final HttpServer _server;
   final List<Map<String, String>> headers = [];
+
+  /// When each request's connection was closed by the proxy.
+  final List<Future<void>?> ended = [];
+
+  /// Nothing of the reply, not even its headers, till this.
+  Completer<void>? before;
   (int, List<String>) Function() reply = () => (200, const []);
+
+  /// Where a reply's line is [holdLine], what is before it is sent and
+  /// the rest waits for this.
+  Completer<void>? held;
+  static const holdLine = '<hold>';
 
   String get base => 'http://127.0.0.1:${_server.port}/v1';
 
@@ -32,15 +46,28 @@ class _Upstream {
     final seen = <String, String>{};
     request.headers.forEach((name, values) => seen[name] = values.join(','));
     headers.add(seen);
+    ended.add(_sockets.endOf(request));
+    await before?.future;
     final (status, lines) = reply();
-    request.response.statusCode = status;
+    // Each line sent as it is flushed, not held till the end.
+    request.response
+      ..statusCode = status
+      ..bufferOutput = false;
     for (final line in lines) {
+      if (line == holdLine) {
+        await request.response.flush();
+        await held?.future;
+        continue;
+      }
       request.response.write('$line\n');
     }
     await request.response.close();
   }
 
-  Future<void> close() => _server.close(force: true);
+  Future<void> close() async {
+    await _server.close(force: true);
+    await _sockets.close();
+  }
 }
 
 Future<int> _post(Uri url, Object body, Map<String, String> headers) async {
@@ -241,6 +268,73 @@ void main() {
     expect(call.responseBytes, greaterThan(0));
   });
 
+  test('shows a call while it is under way; its first token the first of '
+      'its answer itself, not an empty block, a signature or a ping', () async {
+    upstream
+      ..held = Completer<void>()
+      ..reply = () => (
+        200,
+        [
+          'event: message_start',
+          'data: {"type":"message_start","message":{"model":"claude-x","usage":{"input_tokens":12,"output_tokens":1}}}',
+          '',
+          'event: ping',
+          'data: {"type":"ping"}',
+          '',
+          'event: content_block_start',
+          'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
+          '',
+          'event: content_block_delta',
+          'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}',
+          '',
+          'event: content_block_delta',
+          'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"abc"}}',
+          '',
+          _Upstream.holdLine,
+          'event: content_block_delta',
+          'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}',
+          '',
+          'event: message_delta',
+          'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":6}}',
+          '',
+          'event: message_stop',
+          'data: {"type":"message_stop"}',
+        ],
+      );
+    var told = 0;
+    ledger.addListener(() => told++);
+    final posted = _post(await url('relay'), request(model: 'claude-x'), {
+      'x-api-key': 'tok',
+    });
+    // Its answer so far through the proxy, the rest held.
+    UsageCall? progress;
+    for (var i = 0; i < 200; i++) {
+      progress = ledger.underway(session).firstOrNull;
+      if (progress != null && progress.responseBytes > 0) break;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(progress, isNotNull);
+    expect(progress!.status, 0);
+    expect(progress.model, 'claude-x');
+    expect(progress.firstToken, isNull);
+    expect(ledger.underway('another'), isEmpty);
+    expect(await ledger.ofSession(session), isEmpty);
+    expect(told, greaterThan(0));
+    upstream.held!.complete();
+    expect(await posted, 200);
+    expect(ledger.underway(session), isEmpty);
+    ledger.flush();
+    final call = (await ledger.ofSession(session)).single;
+    // The same call: kept to the millisecond.
+    expect(call.at.millisecondsSinceEpoch, progress.at.millisecondsSinceEpoch);
+    expect(call.firstToken, isNotNull);
+    // After its answer so far, kept to the millisecond too.
+    expect(
+      call.firstToken!.inMilliseconds,
+      greaterThanOrEqualTo(progress.duration.inMilliseconds),
+    );
+  });
+
   test('keeps one of the app\'s own calls under the conversation it is '
       'for, an auxiliary one, the header not passed on', () async {
     upstream.reply = () => (
@@ -330,6 +424,69 @@ void main() {
       isEmpty,
     );
     expect(through.sent.single.headers.values.join(), contains('••••'));
+  });
+
+  test('keeps a call Claude Code gave up on as cancelled, given up on '
+      'upstream too: before its answer, and while it comes', () async {
+    for (final answering in [false, true]) {
+      upstream
+        ..headers.clear()
+        ..ended.clear()
+        ..before = answering ? null : Completer<void>()
+        ..held = Completer<void>()
+        ..reply = () => (
+          200,
+          [
+            'event: message_start',
+            'data: {"type":"message_start","message":{"model":"claude-x","usage":{"input_tokens":12,"output_tokens":1}}}',
+            '',
+            'event: content_block_start',
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            '',
+            'event: content_block_delta',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}',
+            '',
+            _Upstream.holdLine,
+            'event: message_stop',
+            'data: {"type":"message_stop"}',
+          ],
+        );
+      final client = HttpClient();
+      final asked = await client.postUrl(await url('relay'));
+      asked.headers
+        ..set('x-api-key', 'tok')
+        ..contentType = ContentType.json;
+      asked.write(jsonEncode(request(model: 'claude-x')));
+      if (answering) {
+        // Its answer begun, the rest held upstream.
+        final answer = await asked.close();
+        await answer.first;
+      } else {
+        unawaited(asked.close().then((_) {}, onError: (_) {}));
+        while (upstream.ended.isEmpty) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }
+      expect(ledger.underway(session), hasLength(1));
+      // Claude Code gives up: its connection closed.
+      client.close(force: true);
+      await upstream.ended.single!.timeout(const Duration(seconds: 5));
+      for (var i = 0; i < 200 && ledger.underway(session).isNotEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(ledger.underway(session), isEmpty);
+      ledger.flush();
+      final call = (await ledger.ofSession(session)).last;
+      expect(call.cancelled, isTrue);
+      expect(call.failed, isFalse);
+      expect(call.status, UsageCall.cancelledStatus);
+      expect(call.error, isNull);
+      expect(call.firstToken == null, !answering);
+      expect(call.input, answering ? 12 : 0);
+      upstream.before?.complete();
+      upstream.held!.complete();
+    }
+    expect(await ledger.ofSession(session), hasLength(2));
   });
 
   test('keeps no count of tokens, and nothing while turned off', () async {

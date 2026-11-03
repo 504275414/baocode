@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../kernel/kernel_types.dart';
+import 'usage_capture.dart';
 import 'usage_record.dart';
 import 'usage_trace.dart';
 
@@ -36,10 +37,15 @@ class ClaudeUsageMeter {
     this.quota,
     this.tracing,
     this.makeup,
+    this.underway,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
   final void Function(UsageCall call, {UsageTrace? trace}) record;
+
+  /// A call is under way (what it is so far, as [progress] tells), or no
+  /// longer is (null): the main agent's asking, and each call streaming.
+  final void Function(Object key, UsageCall Function()? progress)? underway;
 
   /// Whether calls are kept whole (UsageLedger.trace): their answers.
   final bool Function()? tracing;
@@ -84,7 +90,10 @@ class ClaudeUsageMeter {
   final _Tokens _seen = _Tokens();
 
   /// The main agent is to ask: a prompt sent.
-  void requested() => _requestedAt = _clock();
+  void requested() {
+    _requestedAt = _clock();
+    _syncUnderway();
+  }
 
   void receive(Map<String, Object?> message) {
     final parent = message['parent_tool_use_id'] as String?;
@@ -100,17 +109,95 @@ class ClaudeUsageMeter {
         // before is done.
         _closeLoose(parent);
         if (parent == null) _requestedAt = _clock();
-      // The turn is over: what is open is done (cut off, if streaming).
+      // The turn is over: what is open is done (cut off, if streaming),
+      // and nothing more is asked.
       case 'result':
         _closeAll();
+        _requestedAt = null;
         _reconcile(_map(message['modelUsage']));
     }
+    _syncUnderway();
   }
 
   /// Keeps what is still open: the process ends.
   void close() {
     _closeAll();
     _keepHeld();
+    _requestedAt = null;
+    _syncUnderway();
+  }
+
+  /// The calls told [underway], by their keys.
+  final Set<Object> _told = {};
+
+  /// The main agent's asking, before its answer begins: its key.
+  late final Object _asking = (this, '');
+
+  /// Tells [underway] what is under way now, as against what it was told.
+  void _syncUnderway() {
+    final tell = underway;
+    if (tell == null) return;
+    final now = <Object>{
+      if (_requestedAt != null && _streaming(null) == null) _asking,
+      for (final call in _open.values)
+        if (call.streamed) (this, call.id),
+    };
+    if (now.length == _told.length && _told.containsAll(now)) return;
+    for (final key in _told.difference(now)) {
+      tell(key, null);
+    }
+    for (final key in now.difference(_told)) {
+      tell(key, switch (key) {
+        (_, final String id) when id.isNotEmpty => () => _progress(_open[id]),
+        _ => _askingProgress,
+      });
+    }
+    _told
+      ..clear()
+      ..addAll(now);
+  }
+
+  /// The main agent's request asked, nothing of its answer yet.
+  UsageCall _askingProgress() {
+    final now = _clock();
+    final at = _requestedAt ?? now;
+    return UsageCall(
+      at: at,
+      duration: now.difference(at),
+      status: 0,
+      provider: provider,
+      providerName: providerName,
+      protocol: 'anthropic',
+      model: _clean(_model ?? ''),
+      session: session(),
+    );
+  }
+
+  /// [call] streaming, what it is so far.
+  UsageCall _progress(_Call? call) {
+    if (call == null) return _askingProgress();
+    final tokens = call.usage;
+    final agent = call.parent == null ? null : _agents[call.parent];
+    return UsageCall(
+      at: call.at,
+      duration: _clock().difference(call.at),
+      headers: call.headers,
+      firstToken: call.firstToken,
+      status: 0,
+      provider: provider,
+      providerName: providerName,
+      protocol: 'anthropic',
+      model: _clean(call.model ?? ''),
+      session: session(),
+      requestClass: call.parent == null ? UsageClass.main : UsageClass.subagent,
+      agentId: call.parent,
+      agentType: agent?.type,
+      task: agent?.task,
+      input: tokens.input,
+      output: tokens.output,
+      cacheRead: tokens.cacheRead,
+      cacheWrite: tokens.cacheWrite,
+    );
   }
 
   void _closeAll() {
@@ -185,11 +272,9 @@ class ClaudeUsageMeter {
         if (call != null && block['type'] == 'tool_use') {
           call.tool(block['name'] as String?, block['id'] as String?);
         }
+        _firstToken(call, event);
       case 'content_block_delta':
-        final call = _streaming(parent)?..event(event);
-        if (call != null && call.timed) {
-          call.firstToken ??= _clock().difference(call.at);
-        }
+        _firstToken(_streaming(parent)?..event(event), event);
       case 'message_delta':
         final call = _streaming(parent)?..event(event);
         if (call == null) return;
@@ -205,6 +290,13 @@ class ClaudeUsageMeter {
           _close(call.id);
         }
     }
+  }
+
+  /// [call]'s time to first token, where [event] is the first of its
+  /// answer itself (not a block opened empty, a signature).
+  void _firstToken(_Call? call, Map<String, Object?> event) {
+    if (call == null || !call.timed || call.firstToken != null) return;
+    if (bringsAnswer(event)) call.firstToken = _clock().difference(call.at);
   }
 
   /// The call [parent]'s agent is streaming.
@@ -329,6 +421,9 @@ class ClaudeUsageMeter {
       protocol: 'anthropic',
       model: _clean(call.model ?? ''),
       fast: tokens.fast,
+      serviceTier: tokens.serviceTier,
+      geo: tokens.geo,
+      serverTools: tokens.serverTools,
       session: session(),
       requestClass: call.parent == null ? UsageClass.main : UsageClass.subagent,
       context: switch (call.parent == null ? makeup?.call() : null) {
@@ -549,6 +644,11 @@ class _Tokens {
   /// Of [cacheWrite], those kept an hour.
   int cacheWriteLong = 0;
   bool fast = false;
+  String? serviceTier;
+  String? geo;
+
+  /// Anthropic's tools run (`web_search`…), by name.
+  Map<String, int> serverTools = const {};
 
   int get total => input + output + cacheRead + cacheWrite;
 
@@ -578,6 +678,20 @@ class _Tokens {
       if (long != null && long > cacheWriteLong) cacheWriteLong = long;
     }
     if (usage['speed'] == 'fast') fast = true;
+    if (usage['service_tier'] case final String tier when tier.isNotEmpty) {
+      serviceTier = tier;
+    }
+    if (usage['inference_geo'] case final String where when where.isNotEmpty) {
+      geo = where;
+    }
+    final tools = usageServerTools(usage);
+    if (tools.isNotEmpty) {
+      serverTools = {
+        ...serverTools,
+        for (final MapEntry(:key, :value) in tools.entries)
+          if (value > (serverTools[key] ?? 0)) key: value,
+      };
+    }
   }
 
   void add(_Tokens other) {

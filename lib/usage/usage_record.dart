@@ -326,6 +326,9 @@ class UsageCall {
     this.upstreamModel,
     this.effort,
     this.fast = false,
+    this.serviceTier,
+    this.geo,
+    this.serverTools = const {},
     this.stream = true,
     this.session,
     this.requestClass = UsageClass.main,
@@ -388,6 +391,18 @@ class UsageCall {
   final String? upstreamModel;
   final String? effort;
   final bool fast;
+
+  /// The service tier the upstream says it answered at (`priority`,
+  /// `flex`, `standard`…), priced apart where the upstream does.
+  final String? serviceTier;
+
+  /// Where it was answered, as the upstream says (Anthropic's
+  /// `inference_geo`: `us`, `global`).
+  final String? geo;
+
+  /// The upstream's own tools it ran for it, by name (`web_search`,
+  /// `web_fetch`…): how many times, each priced apart where it is.
+  final Map<String, int> serverTools;
   final bool stream;
 
   /// Claude Code's session: the conversation's.
@@ -461,7 +476,15 @@ class UsageCall {
   /// All of its input: read, written and neither.
   int get prompt => input + cacheRead + cacheWrite;
   int get total => prompt + output;
-  bool get failed => status >= 400 || error != null;
+  bool get failed => !cancelled && (status >= 400 || error != null);
+
+  /// Given up on by Claude Code before it was answered in full (it closed
+  /// the connection: it timed out, or was interrupted).
+  bool get cancelled => status == cancelledStatus;
+
+  /// [status] of a call [cancelled]: nginx's for a client that closed the
+  /// connection.
+  static const cancelledStatus = 499;
 
   /// Output tokens a second, from the first of them.
   double? get speed {
@@ -495,6 +518,9 @@ class UsageCall {
     'um': ?upstreamModel,
     'ef': ?effort,
     if (fast) 'fa': true,
+    'tr': ?serviceTier,
+    'geo': ?geo,
+    if (serverTools.isNotEmpty) 'sv': serverTools,
     if (!stream) 's': false,
     'sid': ?session,
     if (requestClass != UsageClass.main) 'c': requestClass.key,
@@ -581,6 +607,9 @@ class UsageCall {
       upstreamModel: text('um'),
       effort: text('ef'),
       fast: json['fa'] == true,
+      serviceTier: text('tr'),
+      geo: text('geo'),
+      serverTools: usageCounts(json['sv']),
       stream: json['s'] != false,
       session: text('sid'),
       requestClass: UsageClass.parse(text('c')) ?? UsageClass.main,
@@ -635,6 +664,9 @@ class UsageCall {
     upstreamModel: upstreamModel,
     effort: effort,
     fast: fast,
+    serviceTier: serviceTier,
+    geo: geo,
+    serverTools: serverTools,
     stream: stream,
     session: session,
     requestClass: requestClass,
@@ -673,6 +705,9 @@ class UsageCall {
         upstreamModel: upstreamModel,
         effort: effort,
         fast: fast,
+        serviceTier: serviceTier,
+        geo: geo,
+        serverTools: serverTools,
         stream: stream,
         session: session,
         requestClass: requestClass,
@@ -718,6 +753,9 @@ class UsageCall {
     upstreamModel: upstreamModel,
     effort: effort,
     fast: fast,
+    serviceTier: serviceTier,
+    geo: geo,
+    serverTools: serverTools,
     stream: stream,
     session: session,
     requestClass: requestClass,
