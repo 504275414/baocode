@@ -278,6 +278,19 @@ void main() {
     final turn3ActiveUpsert = events.whereType<ItemUpserted>().where((e) => e.id == 'turn_3').last;
     expect((turn3ActiveUpsert.item as UserMessageItem).queued, isFalse);
 
+    // 6. Test sendQueuedNow: while turn_3 is active, queue turn_4 and turn_5
+    kernel.send(const KernelTurn(id: 'turn_4', text: 'Hello 4'));
+    kernel.send(const KernelTurn(id: 'turn_5', text: 'Hello 5'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // Send turn_5 now -> should interrupt turn_3 and only start turn_5; turn_4 stays queued
+    kernel.sendQueuedNow('turn_5');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(events.whereType<TurnEnded>().any((e) => e.turnId == 'turn_3' && e.interrupted), isTrue);
+    expect(events.whereType<TurnStarted>().any((e) => e.turnId == 'turn_5'), isTrue);
+    expect(events.whereType<TurnStarted>().any((e) => e.turnId == 'turn_4'), isFalse);
+
     kernel.dispose();
   });
 }

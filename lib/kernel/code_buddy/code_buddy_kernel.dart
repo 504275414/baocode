@@ -109,6 +109,9 @@ class CodeBuddyKernel
   /// Queued turns waiting to execute once the active turn ends
   final List<KernelTurn> _queuedTurns = [];
 
+  /// Turn requested to execute immediately (via sendQueuedNow) after the active turn is cancelled
+  KernelTurn? _immediateNextTurn;
+
   /// Streaming state
   String? _currentThoughtId;
   StringBuffer? _thoughtBuffer;
@@ -248,6 +251,7 @@ class CodeBuddyKernel
   @override
   void dispose() {
     _queuedTurns.clear();
+    _immediateNextTurn = null;
     unawaited(_mcpServer?.close(force: true));
     _mcpServer = null;
     _mcpPort = null;
@@ -540,12 +544,11 @@ class CodeBuddyKernel
     final turn = _queuedTurns.removeAt(index);
     emit(ItemRemoved(nextSeq, turnId));
 
-    _queuedTurns.insert(0, turn);
-
     if (_turn != null) {
+      _immediateNextTurn = turn;
       cancel();
     } else {
-      _startTurn(_queuedTurns.removeAt(0));
+      _startTurn(turn);
     }
   }
 
@@ -1406,7 +1409,16 @@ class CodeBuddyKernel
       ),
     );
 
-    if (_queuedTurns.isNotEmpty) {
+    final immediate = _immediateNextTurn;
+    _immediateNextTurn = null;
+
+    if (immediate != null) {
+      scheduleMicrotask(() {
+        if (!_stoppedCompleter.isCompleted && _turn == null) {
+          _startTurn(immediate);
+        }
+      });
+    } else if (!interrupted && _queuedTurns.isNotEmpty) {
       final nextTurn = _queuedTurns.removeAt(0);
       scheduleMicrotask(() {
         if (!_stoppedCompleter.isCompleted && _turn == null) {
