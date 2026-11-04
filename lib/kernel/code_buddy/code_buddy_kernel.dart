@@ -113,6 +113,7 @@ class CodeBuddyKernel
   KernelTurn? _immediateNextTurn;
   Timer? _cancelFallbackTimer;
   DateTime? _lastCancelRequestedAt;
+  bool _turnPromptInFlight = false;
 
   /// Streaming state
   String? _currentThoughtId;
@@ -512,6 +513,7 @@ class CodeBuddyKernel
 
   void _startTurn(KernelTurn turn) {
     _turn = turn.id;
+    _turnPromptInFlight = false;
     _turnStarted = DateTime.now();
 
     emit(TurnStarted(nextSeq, turn.id));
@@ -709,6 +711,8 @@ class CodeBuddyKernel
         }
       }
 
+      _turnPromptInFlight = true;
+
       final res = await _request(
         'session/prompt',
         {
@@ -718,6 +722,7 @@ class CodeBuddyKernel
         timeout: null,
       );
 
+      _turnPromptInFlight = false;
       _cancelFallbackTimer?.cancel();
       _cancelFallbackTimer = null;
 
@@ -726,6 +731,7 @@ class CodeBuddyKernel
         _endTurn(turn.id, interrupted: res['stopReason'] == 'cancelled');
       }
     } catch (e, st) {
+      _turnPromptInFlight = false;
       _cancelFallbackTimer?.cancel();
       _cancelFallbackTimer = null;
       debugPrint('CodeBuddy _executeTurn error: $e\n$st');
@@ -757,10 +763,7 @@ class CodeBuddyKernel
     final turn = _turn;
     final sid = _sessionId;
     if (turn == null) return;
-    if (sid != null) {
-      _lastCancelRequestedAt = DateTime.now();
-      _notify('session/cancel', {'sessionId': sid});
-    }
+
     for (final entry in _pendingRpcApprovals.entries) {
       emit(InteractionResolved(nextSeq, entry.key));
       _transport?.write({
@@ -780,8 +783,20 @@ class CodeBuddyKernel
     }
     _approvals.clear();
 
-    // Do not end turn synchronously here. CodeBuddy ACP server will reply to the active
-    // session/prompt with stopReason: 'cancelled', which allows _executeTurn to end the
+    // If the prompt has not been sent to CodeBuddy yet (e.g. during the pre-prompt barrier wait),
+    // we can immediately end this turn without waiting for an RPC response from the server.
+    if (!_turnPromptInFlight) {
+      _endTurn(turn, interrupted: true);
+      return;
+    }
+
+    if (sid != null) {
+      _lastCancelRequestedAt = DateTime.now();
+      _notify('session/cancel', {'sessionId': sid});
+    }
+
+    // Do not end turn synchronously here if prompt is in-flight. CodeBuddy ACP server will reply
+    // to the active session/prompt with stopReason: 'cancelled', which allows _executeTurn to end the
     // turn cleanly and schedule any immediate next turn without prompt collision.
     // Set a fallback timer in case the process is unresponsive.
     _cancelFallbackTimer?.cancel();
@@ -1409,6 +1424,7 @@ class CodeBuddyKernel
   }
 
   void _endTurn(String turn, {required bool interrupted}) {
+    _turnPromptInFlight = false;
     _cancelFallbackTimer?.cancel();
     _cancelFallbackTimer = null;
     _turn = null;
