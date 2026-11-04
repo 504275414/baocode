@@ -112,6 +112,7 @@ class CodeBuddyKernel
   /// Turn requested to execute immediately (via sendQueuedNow) after the active turn is cancelled
   KernelTurn? _immediateNextTurn;
   Timer? _cancelFallbackTimer;
+  DateTime? _lastCancelRequestedAt;
 
   /// Streaming state
   String? _currentThoughtId;
@@ -695,6 +696,19 @@ class CodeBuddyKernel
           },
       ];
 
+      // CodeBuddy has an internal 500ms "Cancel Barrier" (isCancelBarrierActive).
+      // Any session/prompt received within 500ms of a cancellation is immediately
+      // short-circuited with stopReason: "cancelled" without being executed.
+      // Wait past the 500ms barrier (using 600ms safety window) before sending prompt.
+      if (_lastCancelRequestedAt != null) {
+        final elapsed = DateTime.now().difference(_lastCancelRequestedAt!);
+        const barrierDuration = Duration(milliseconds: 600);
+        if (elapsed < barrierDuration) {
+          await Future<void>.delayed(barrierDuration - elapsed);
+          if (_turn != turn.id) return;
+        }
+      }
+
       final res = await _request(
         'session/prompt',
         {
@@ -744,6 +758,7 @@ class CodeBuddyKernel
     final sid = _sessionId;
     if (turn == null) return;
     if (sid != null) {
+      _lastCancelRequestedAt = DateTime.now();
       _notify('session/cancel', {'sessionId': sid});
     }
     for (final entry in _pendingRpcApprovals.entries) {
