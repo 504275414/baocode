@@ -24,7 +24,8 @@ class CodeBuddyKernel
         SelectsPermission,
         ProvidesCommands,
         ReportsContext,
-        AcceptsImages {
+        AcceptsImages,
+        QueuesMessages {
   CodeBuddyKernel(
     this.descriptor,
     this.context, {
@@ -104,6 +105,9 @@ class CodeBuddyKernel
   String? _turn;
   DateTime? _turnStarted;
   final Set<String> _sentTurns = {};
+
+  /// Queued turns waiting to execute once the active turn ends
+  final List<KernelTurn> _queuedTurns = [];
 
   /// Streaming state
   String? _currentThoughtId;
@@ -243,6 +247,7 @@ class CodeBuddyKernel
 
   @override
   void dispose() {
+    _queuedTurns.clear();
     unawaited(_mcpServer?.close(force: true));
     _mcpServer = null;
     _mcpPort = null;
@@ -475,6 +480,27 @@ class CodeBuddyKernel
   @override
   void send(KernelTurn turn) {
     if (!_sentTurns.add(turn.id)) return;
+
+    if (_turn != null) {
+      _queuedTurns.add(turn);
+      emit(
+        ItemUpserted(
+          nextSeq,
+          turn.id,
+          UserMessageItem(
+            text: turn.text,
+            images: turn.images,
+            queued: true,
+          ),
+        ),
+      );
+      return;
+    }
+
+    _startTurn(turn);
+  }
+
+  void _startTurn(KernelTurn turn) {
     _turn = turn.id;
     _turnStarted = DateTime.now();
 
@@ -483,11 +509,56 @@ class CodeBuddyKernel
       ItemUpserted(
         nextSeq,
         turn.id,
-        UserMessageItem(text: turn.text, images: turn.images),
+        UserMessageItem(
+          text: turn.text,
+          images: turn.images,
+          queued: false,
+        ),
       ),
     );
 
     unawaited(_executeTurn(turn));
+  }
+
+  // --- Queued Messages --------------------------------------------------------
+
+  @override
+  Future<bool> cancelQueued(String turnId) async {
+    final index = _queuedTurns.indexWhere((t) => t.id == turnId);
+    if (index == -1) return false;
+
+    _queuedTurns.removeAt(index);
+    emit(ItemRemoved(nextSeq, turnId));
+    return true;
+  }
+
+  @override
+  void sendQueuedNow(String turnId) {
+    final index = _queuedTurns.indexWhere((t) => t.id == turnId);
+    if (index == -1) return;
+
+    final turn = _queuedTurns.removeAt(index);
+    emit(ItemRemoved(nextSeq, turnId));
+
+    _queuedTurns.insert(0, turn);
+
+    if (_turn != null) {
+      cancel();
+    } else {
+      _startTurn(_queuedTurns.removeAt(0));
+    }
+  }
+
+  @override
+  void moveQueued(String turnId, int index) {
+    final currentIndex = _queuedTurns.indexWhere((t) => t.id == turnId);
+    if (currentIndex == -1) return;
+
+    final turn = _queuedTurns.removeAt(currentIndex);
+    final targetIndex = index.clamp(0, _queuedTurns.length);
+    _queuedTurns.insert(targetIndex, turn);
+
+    emit(QueueReordered(nextSeq, _queuedTurns.map((t) => t.id).toList()));
   }
 
   Future<void> _ensureMcpServer(String workingDir) async {
@@ -1334,6 +1405,15 @@ class CodeBuddyKernel
         },
       ),
     );
+
+    if (_queuedTurns.isNotEmpty) {
+      final nextTurn = _queuedTurns.removeAt(0);
+      scheduleMicrotask(() {
+        if (!_stoppedCompleter.isCompleted && _turn == null) {
+          _startTurn(nextTurn);
+        }
+      });
+    }
   }
 }
 

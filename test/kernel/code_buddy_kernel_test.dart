@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/code_buddy/code_buddy_kernel.dart';
 import 'package:baocode/kernel/code_buddy/code_buddy_transport.dart';
@@ -217,6 +218,65 @@ void main() {
     expect(completedTool.tool, 'read_file');
     expect(completedTool.status, ToolStatus.succeeded);
     expect(completedTool.output, 'file contents');
+
+    kernel.dispose();
+  });
+
+  test('CodeBuddyKernel queued messages test', () async {
+    final mockTransport = MockCodeBuddyTransport();
+    final kernel = CodeBuddyKernel(
+      KernelRegistry.codeBuddy,
+      const KernelContext(),
+      startTransport: ({cwd}) async => mockTransport,
+    );
+
+    expect(kernel, isA<QueuesMessages>());
+
+    final events = <KernelEvent>[];
+    kernel.events.listen(events.add);
+
+    // 1. Send first turn - active turn
+    kernel.send(const KernelTurn(id: 'turn_1', text: 'Hello 1'));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(events.whereType<TurnStarted>().any((e) => e.turnId == 'turn_1'), isTrue);
+    final turn1Upsert = events.whereType<ItemUpserted>().firstWhere((e) => e.id == 'turn_1');
+    expect((turn1Upsert.item as UserMessageItem).queued, isFalse);
+
+    // 2. Send second and third turn while turn_1 is active -> should be queued
+    kernel.send(const KernelTurn(id: 'turn_2', text: 'Hello 2'));
+    kernel.send(const KernelTurn(id: 'turn_3', text: 'Hello 3'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    final turn2Upsert = events.whereType<ItemUpserted>().firstWhere((e) => e.id == 'turn_2');
+    expect((turn2Upsert.item as UserMessageItem).queued, isTrue);
+
+    final turn3Upsert = events.whereType<ItemUpserted>().firstWhere((e) => e.id == 'turn_3');
+    expect((turn3Upsert.item as UserMessageItem).queued, isTrue);
+
+    // 3. Move queued: move turn_3 to front
+    kernel.moveQueued('turn_3', 0);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    final reordered = events.whereType<QueueReordered>().last;
+    expect(reordered.ids, ['turn_3', 'turn_2']);
+
+    // 4. Cancel queued: cancel turn_2
+    final cancelled = await kernel.cancelQueued('turn_2');
+    expect(cancelled, isTrue);
+    expect(events.whereType<ItemRemoved>().any((e) => e.id == 'turn_2'), isTrue);
+
+    // 5. Complete turn_1 -> turn_3 should start automatically
+    mockTransport._controller.add({
+      'jsonrpc': '2.0',
+      'id': mockTransport.sent.last['id'],
+      'result': {'stopReason': 'end_turn'},
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(events.whereType<TurnEnded>().any((e) => e.turnId == 'turn_1'), isTrue);
+    expect(events.whereType<TurnStarted>().any((e) => e.turnId == 'turn_3'), isTrue);
+    final turn3ActiveUpsert = events.whereType<ItemUpserted>().where((e) => e.id == 'turn_3').last;
+    expect((turn3ActiveUpsert.item as UserMessageItem).queued, isFalse);
 
     kernel.dispose();
   });
