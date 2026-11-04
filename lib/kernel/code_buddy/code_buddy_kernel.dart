@@ -111,6 +111,7 @@ class CodeBuddyKernel
 
   /// Turn requested to execute immediately (via sendQueuedNow) after the active turn is cancelled
   KernelTurn? _immediateNextTurn;
+  Timer? _cancelFallbackTimer;
 
   /// Streaming state
   String? _currentThoughtId;
@@ -250,6 +251,8 @@ class CodeBuddyKernel
 
   @override
   void dispose() {
+    _cancelFallbackTimer?.cancel();
+    _cancelFallbackTimer = null;
     _queuedTurns.clear();
     _immediateNextTurn = null;
     unawaited(_mcpServer?.close(force: true));
@@ -437,6 +440,8 @@ class CodeBuddyKernel
   }
 
   void _onDisconnected() {
+    _cancelFallbackTimer?.cancel();
+    _cancelFallbackTimer = null;
     health = const KernelHealth(
       KernelHealthStatus.failed,
       message: 'CodeBuddy process disconnected',
@@ -545,8 +550,11 @@ class CodeBuddyKernel
     emit(ItemRemoved(nextSeq, turnId));
 
     if (_turn != null) {
+      if (_immediateNextTurn != null) {
+        _queuedTurns.insert(0, _immediateNextTurn!);
+      }
       _immediateNextTurn = turn;
-      cancel();
+      _cancelInternal(clearImmediate: false);
     } else {
       _startTurn(turn);
     }
@@ -696,11 +704,16 @@ class CodeBuddyKernel
         timeout: null,
       );
 
-      // Prompt completed successfully
+      _cancelFallbackTimer?.cancel();
+      _cancelFallbackTimer = null;
+
+      // Prompt completed successfully (or was cancelled)
       if (_turn == turn.id) {
         _endTurn(turn.id, interrupted: res['stopReason'] == 'cancelled');
       }
     } catch (e, st) {
+      _cancelFallbackTimer?.cancel();
+      _cancelFallbackTimer = null;
       debugPrint('CodeBuddy _executeTurn error: $e\n$st');
       if (_turn == turn.id) {
         emit(
@@ -717,6 +730,16 @@ class CodeBuddyKernel
 
   @override
   void cancel() {
+    _cancelInternal(clearImmediate: true);
+  }
+
+  void _cancelInternal({bool clearImmediate = false}) {
+    if (clearImmediate) {
+      if (_immediateNextTurn != null) {
+        _queuedTurns.insert(0, _immediateNextTurn!);
+        _immediateNextTurn = null;
+      }
+    }
     final turn = _turn;
     final sid = _sessionId;
     if (turn == null) return;
@@ -736,7 +759,22 @@ class CodeBuddyKernel
       });
     }
     _pendingRpcApprovals.clear();
-    _endTurn(turn, interrupted: true);
+
+    for (final id in _approvals.keys) {
+      emit(InteractionResolved(nextSeq, id));
+    }
+    _approvals.clear();
+
+    // Do not end turn synchronously here. CodeBuddy ACP server will reply to the active
+    // session/prompt with stopReason: 'cancelled', which allows _executeTurn to end the
+    // turn cleanly and schedule any immediate next turn without prompt collision.
+    // Set a fallback timer in case the process is unresponsive.
+    _cancelFallbackTimer?.cancel();
+    _cancelFallbackTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (_turn == turn) {
+        _endTurn(turn, interrupted: true);
+      }
+    });
   }
 
   @override
@@ -1356,6 +1394,8 @@ class CodeBuddyKernel
   }
 
   void _endTurn(String turn, {required bool interrupted}) {
+    _cancelFallbackTimer?.cancel();
+    _cancelFallbackTimer = null;
     _turn = null;
     _closeThoughtIfOpen();
     _closeMessageIfOpen();

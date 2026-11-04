@@ -14,6 +14,22 @@ class MockCodeBuddyTransport implements CodeBuddyTransport {
       StreamController<Map<String, Object?>>.broadcast();
 
   final List<Map<String, Object?>> sent = [];
+  bool autoRespondPrompt = true;
+  Object? pendingPromptId;
+
+  void completePrompt({String stopReason = 'end_turn'}) {
+    final id = pendingPromptId;
+    if (id != null) {
+      pendingPromptId = null;
+      _controller.add({
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': {
+          'stopReason': stopReason,
+        },
+      });
+    }
+  }
 
   @override
   Stream<Map<String, Object?>> get messages => _controller.stream;
@@ -84,7 +100,12 @@ class MockCodeBuddyTransport implements CodeBuddyTransport {
           },
         },
       });
+    } else if (method == 'session/cancel') {
+      if (pendingPromptId != null) {
+        completePrompt(stopReason: 'cancelled');
+      }
     } else if (method == 'session/prompt') {
+      pendingPromptId = id;
       // Simulate streaming chunks
       _controller.add({
         'jsonrpc': '2.0',
@@ -108,13 +129,9 @@ class MockCodeBuddyTransport implements CodeBuddyTransport {
           },
         },
       });
-      _controller.add({
-        'jsonrpc': '2.0',
-        'id': id,
-        'result': {
-          'stopReason': 'end_turn',
-        },
-      });
+      if (autoRespondPrompt) {
+        completePrompt(stopReason: 'end_turn');
+      }
     }
   }
 
@@ -223,7 +240,7 @@ void main() {
   });
 
   test('CodeBuddyKernel queued messages test', () async {
-    final mockTransport = MockCodeBuddyTransport();
+    final mockTransport = MockCodeBuddyTransport()..autoRespondPrompt = false;
     final kernel = CodeBuddyKernel(
       KernelRegistry.codeBuddy,
       const KernelContext(),
@@ -266,11 +283,7 @@ void main() {
     expect(events.whereType<ItemRemoved>().any((e) => e.id == 'turn_2'), isTrue);
 
     // 5. Complete turn_1 -> turn_3 should start automatically
-    mockTransport._controller.add({
-      'jsonrpc': '2.0',
-      'id': mockTransport.sent.last['id'],
-      'result': {'stopReason': 'end_turn'},
-    });
+    mockTransport.completePrompt(stopReason: 'end_turn');
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
     expect(events.whereType<TurnEnded>().any((e) => e.turnId == 'turn_1'), isTrue);
@@ -283,7 +296,7 @@ void main() {
     kernel.send(const KernelTurn(id: 'turn_5', text: 'Hello 5'));
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
-    // Send turn_5 now -> should interrupt turn_3 and only start turn_5; turn_4 stays queued
+    // Send turn_5 now -> sends session/cancel, mockTransport responds with cancelled, turn_3 ends cleanly and turn_5 starts immediately
     kernel.sendQueuedNow('turn_5');
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
