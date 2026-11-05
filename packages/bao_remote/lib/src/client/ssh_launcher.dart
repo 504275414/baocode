@@ -1352,6 +1352,12 @@ Future<String?> chooseSsh(
   Map<String, String> environment, {
   String? bundled,
 }) async {
+  if (Platform.isAndroid) {
+    if (bundled != null && File(bundled).existsSync()) return bundled;
+    final system = findSsh(environment);
+    if (system != null) return system;
+    return null;
+  }
   final system = findSsh(environment);
   if (!Platform.isWindows || bundled == null || !File(bundled).existsSync()) {
     return system;
@@ -1369,6 +1375,16 @@ Future<String?> chooseSsh(
 /// The system's `ssh`: OpenSSH in System32 on Windows, else the first on
 /// [environment]'s PATH (`/usr/bin/ssh` on macOS); null when there is none.
 String? findSsh(Map<String, String> environment) {
+  if (Platform.isAndroid) {
+    for (final candidate in const [
+      '/data/data/dev.baocode.baocode/files/bin/ssh',
+      '/data/user/0/dev.baocode.baocode/files/bin/ssh',
+      '/data/data/com.termux/files/usr/bin/ssh',
+      '/data/user/0/com.termux/files/usr/bin/ssh',
+    ]) {
+      if (File(candidate).existsSync()) return candidate;
+    }
+  }
   if (Platform.isWindows) {
     final root =
         environment['SystemRoot'] ?? environment['SYSTEMROOT'] ?? r'C:\Windows';

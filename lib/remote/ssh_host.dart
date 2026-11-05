@@ -19,6 +19,7 @@ import 'remote_location.dart';
 import 'remote_lsp.dart';
 import 'remote_services.dart';
 import 'ssh_passwords.dart';
+import '../platform/android_ssh.dart';
 
 export '../kernel/claude_code/claude_install_progress.dart'
     show ClaudeInstallProgress;
@@ -539,13 +540,21 @@ class SshHosts extends ChangeNotifier {
       SshLauncher(ssh: 'ssh', binaries: await _serverBinaries());
 
   Future<SshLauncher> _makeLauncher() async {
-    final ssh = await chooseSsh(
-      Platform.environment,
-      bundled: p.join(
+    final String? bundledPath;
+    if (Platform.isWindows) {
+      bundledPath = p.join(
         p.dirname(Platform.resolvedExecutable),
         'openssh',
         'ssh.exe',
-      ),
+      );
+    } else if (Platform.isAndroid) {
+      bundledPath = await ensureAndroidSsh();
+    } else {
+      bundledPath = null;
+    }
+    final ssh = await chooseSsh(
+      Platform.environment,
+      bundled: bundledPath,
     );
     if (ssh == null) {
       throw const SshConnectException(
