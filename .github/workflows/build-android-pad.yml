@@ -54,7 +54,7 @@ jobs:
         run: flutter pub get
 
       - name: Build APK (Release)
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Rename APK
         run: |
@@ -67,4 +67,3 @@ jobs:
           name: baocode-pad-apk
           path: build/out/baocode-pad-release.apk
           if-no-files-found: error
-
