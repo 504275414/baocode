@@ -55,6 +55,7 @@ class ChatHistoryView extends StatefulWidget {
     this.onSetGoal,
     this.onFindClosed,
     this.after,
+    this.underTitle = false,
   });
 
   /// The conversation shown: a session's, or a subagent's.
@@ -83,6 +84,11 @@ class ChatHistoryView extends StatefulWidget {
   /// conversation itself (the conversations asked beside it there); none
   /// for most.
   final Widget? Function(int index)? after;
+
+  /// Whether a row is right over it (its card's title): room of its own
+  /// above the history, which then keeps less above its first item and a
+  /// stuck message, and fades less deep at its top.
+  final bool underTitle;
 
   @override
   State<ChatHistoryView> createState() => _ChatHistoryViewState();
@@ -891,8 +897,11 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   // its first item is pressed. That bar is not a row of the list, so no index
   // is moved by it; the room for it is the list's top padding.
 
-  /// The list's room above its first item, and the bar's height after it.
-  static const _chatTopPadding = 20.0;
+  /// The list's room above its first item: as at its sides (the gutter),
+  /// where a message as wide as the chat lets it be sticks too (see
+  /// [_stickyInset]); less under a row ([ChatHistoryView.underTitle]). And
+  /// the bar's height after it.
+  double get _chatTopPadding => widget.underTitle ? 12 : _gutter;
   static const _earlierBarHeight = 40.0;
 
   /// How near the top the list is scrolled before the earlier turns are read.
@@ -903,17 +912,37 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     _ => null,
   };
 
-  /// There were earlier turns to read: the room for the bar stays, as it
-  /// goes with the last of them.
-  bool _earlierSeen = false;
+  /// There are earlier turns to read, or they are being read: room for
+  /// the bar.
+  bool get _earlierRoom => switch (_session) {
+    final session? => session.hasEarlierHistory || session.loadingEarlier,
+    null => false,
+  };
 
-  bool get _earlierRoom {
+  /// Whether the list was last laid out with room for the bar, and for
+  /// whose turns.
+  (ChatSession?, bool) _earlierRoomLaidOut = (null, false);
+
+  /// [_earlierRoom], what is in the list kept where it is as the room comes
+  /// or goes (the last of the earlier turns read): scrolled by as much,
+  /// unless at the top, where the bar goes with it.
+  bool _keepEarlierRoom() {
     final session = _session;
-    if (session != null &&
-        (session.hasEarlierHistory || session.loadingEarlier)) {
-      _earlierSeen = true;
+    final room = _earlierRoom;
+    final (laidOutFor, laidOut) = _earlierRoomLaidOut;
+    _earlierRoomLaidOut = (session, room);
+    if (!identical(laidOutFor, session) || laidOut == room) return room;
+    if (_scrollController.hasClients) {
+      final position = _scrollController.position;
+      if (position.hasPixels && position.pixels > 0) {
+        position.correctBy(
+          room
+              ? _earlierBarHeight
+              : -math.min(_earlierBarHeight, position.pixels),
+        );
+      }
     }
-    return _earlierSeen;
+    return room;
   }
 
   /// Reading them brought nothing: not tried again until asked to.
@@ -1682,15 +1711,16 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     _editorMoved.value++;
   }
 
-  /// Room above the editor stuck to the top of the list.
-  static const _editorInset = 8.0;
+  /// Room above the editor stuck to the top of the list: as above the
+  /// stuck message it opens from.
+  double get _editorInset => _stickyInset;
 
   /// Where the editor goes, relative to [layer]: on its placeholder, but
   /// never above the top of the list (it sticks there once scrolled past),
   /// unless the user's messages do not stick ([_sticks]). Null when the
   /// placeholder is out of the built items, out of view.
   double? _editorTop(RenderBox layer) {
-    const inset = _editorInset;
+    final inset = _editorInset;
     // Closing: on the message, below its gap (its placeholder is gone).
     if (_closingIndex case final index?) {
       final item = _laidOutItems()
@@ -1702,8 +1732,12 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
           layer.localToGlobal(Offset.zero).dy;
       return _sticks ? math.max(top, inset) : top;
     }
+    // Not findRenderObject: painted in the frame whose layout dropped the
+    // placeholder's item, its element is inactive (and its box detached)
+    // until the frame ends.
     final placeholder =
-        _editorPlaceholderKey.currentContext?.findRenderObject() as RenderBox?;
+        (_editorPlaceholderKey.currentContext as Element?)?.renderObject
+            as RenderBox?;
     if (placeholder != null && placeholder.attached && placeholder.hasSize) {
       final top =
           placeholder.localToGlobal(Offset.zero).dy -
@@ -1720,8 +1754,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
 
   // --- The sticky user message ---------------------------------------------
 
-  /// Room above the stuck message, as above the editor stuck to the top.
-  static const _stickyInset = AppMetrics.contentInset;
+  /// Room above the stuck message: as above the list's first item, and at
+  /// its sides where it is as wide as the chat lets it be (the gutter).
+  double get _stickyInset => _chatTopPadding;
 
   /// Height of the fade under the stuck message, over the transcript
   /// scrolling beneath it.
@@ -1729,7 +1764,11 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
 
   /// How far the list scrolls while the stuck message comes in (and goes
   /// as the next pushes it away): as far as the list's top fade reaches.
-  static const _stickyEase = 32.0;
+  double get _stickyEase => _topFade;
+
+  /// How deep the list's top fade is: less under a row, which keeps it
+  /// apart from what is above already ([ChatHistoryView.underTitle]).
+  double get _topFade => widget.underTitle ? 24 : 32;
 
   /// Which copies are built is settled after layout, with the items where
   /// the scroll put them: a frame late, but ready before any scroll brings
@@ -1869,6 +1908,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         child: EdgeFadeMask(
           top: true,
           bottom: false,
+          topFadeLength: _topFade,
           topFadeAmount: () => 1 - (_stickyIn(index) ?? 1),
           repaint: repaint,
           child: _StickyFollower(
@@ -2627,6 +2667,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                                 child: EdgeFadeMask(
                                   top: _contentAbove,
                                   bottom: _contentBelow,
+                                  topFadeLength: _topFade,
                                   // Hidden under the stuck message, fading in
                                   // below it.
                                   topCover: _stickyCover,
@@ -2655,7 +2696,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                                           padding: EdgeInsets.fromLTRB(
                                             _gutter,
                                             _chatTopPadding +
-                                                (_earlierRoom
+                                                (_keepEarlierRoom()
                                                     ? _earlierBarHeight
                                                     : 0),
                                             _gutter,

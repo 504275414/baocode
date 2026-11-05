@@ -8,7 +8,8 @@ import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
 import 'package:bao_editor/textmate/textmate_syntax.dart';
-import 'package:bao_markdown/bao_markdown.dart' show MdClipboard;
+import 'package:bao_markdown/bao_markdown.dart'
+    show MarkdownEditor, MdClipboard;
 
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
 
@@ -171,6 +172,7 @@ Future<void> main(List<String> arguments) async {
   if (!kIsWeb) {
     AppEventWatch.start();
     FrameWatch.start();
+    MarkdownEditor.onInputLost = (message) => appEvent('input', message);
   }
   // The Windows app's own logs and the macOS app's hang reports go beside
   // them.
@@ -520,14 +522,12 @@ void followSettingsFiles(SettingsFiles files) {
   // Settings → General → Claude Code: the core sessions run on (BaoCode's
   // own, or the CLI), read as each agent starts. Unset, the CLI where it
   // is installed (looked for on the app's PATH, then the shell's), else
-  // the built-in core, which suggests the CLI.
+  // the built-in core.
   ClaudeCore.cliInstalled = localClaudeInstalled;
   unawaited(lookForLocalClaude());
   ClaudeCore.current = () =>
       ClaudeCore.parse(files.settings[ClaudeCore.settingKey]);
   ClaudeCore.changes = files.settings;
-  ClaudeCore.pick = (core) =>
-      files.settings.update(ClaudeCore.settingKey, core.name);
   // Settings → Models: the upstreams, kept in settings.json.
   ModelProviders.current = ModelProviders.settings(files.settings);
   // Claude Code's own models as it last listed them: in the picker
@@ -886,12 +886,14 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
   }
 
   /// The terminals take the theme's colors (`getXtermTheme`); the window's
-  /// own parts follow its type.
+  /// own parts follow its type. The panel's on a card as the editors are,
+  /// of their color: without `terminal.background`, theirs.
   void _colorThemeChanged() {
     final colors = _themes.colors;
     terminalColorTheme.value = TerminalColorTheme.resolve(
       colors.get,
       type: colors.type,
+      inEditor: true,
     );
     editorTerminalColorTheme.value = TerminalColorTheme.resolve(
       colors.get,
@@ -971,9 +973,10 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
         // icons and gaps grow with the text they hold.
         final zoom = percent / 100;
         final media = UiZoom.zoomed(MediaQuery.of(context), zoom);
-        // The traffic lights, level with the title bar as it grows.
+        // The traffic lights in the middle of the title bar, as it grows.
         WindowControls.setTitleBarDrop(
-          AppMetrics.titleBarHeight * (zoom - 1) / 2,
+          (AppMetrics.titleBarHeight * zoom - AppMetrics.nativeTitleBarHeight) /
+              2,
           viewId: window.viewId,
         );
         // Windows blurs glyphs drawn at a fractional pixel size.

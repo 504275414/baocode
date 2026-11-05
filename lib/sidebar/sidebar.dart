@@ -34,18 +34,21 @@ import '../models/model_providers.dart';
 import '../remote/remote_location.dart';
 import '../remote/remote_status.dart' show sshErrorText;
 import '../remote/ssh_host.dart' show SshHost, SshHostState, SshHosts;
+import '../remote/remote_host_settings.dart';
 import '../theme/app_theme.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import '../update/update_service.dart';
 import '../workspace/chat_drag.dart';
 import '../workspace/editor_launcher.dart';
+import '../workspace/islands.dart';
 import '../workspace/title_bar_double_click.dart';
 import '../workspace/window_controls.dart';
 import '../workspace/workspace.dart';
 import '../workspace/workspace_dialog.dart';
 import 'sidebar_menu.dart';
 import 'sidebar_times.dart';
+import '../theme/svg_icons.dart';
 
 enum SidebarGrouping {
   project('Project', Icons.folder_outlined),
@@ -199,7 +202,17 @@ class Sidebar extends StatefulWidget {
     this.updates,
     this.onUpdate,
     this.setup,
+    this.surface,
+    this.atRight = false,
   });
+
+  /// Under it: [AppColors.sidebarSurface] by default; none where the
+  /// window's own color is under it already.
+  final Color? surface;
+
+  /// At the window's right (see ChatLayout): its collapse button at its
+  /// left, by the conversations.
+  final bool atRight;
 
   /// Over the foot's row: the setup checklist folded ("Setup n/m"), which
   /// shows nothing when the checklist does not fold there.
@@ -984,7 +997,7 @@ class _SidebarState extends State<Sidebar>
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppColors.sidebarSurface,
+      color: widget.surface ?? AppColors.sidebarSurface,
       child: Listener(
         // On the way up, so a click lands on the row it went down on
         // before every project is listed again.
@@ -1084,16 +1097,21 @@ class _SidebarState extends State<Sidebar>
     );
   }
 
-  /// Under the window's traffic lights; the collapse button on the right.
+  /// Under the window's traffic lights; the collapse button on the side
+  /// by the conversations.
   Widget _buildTopBar() {
+    final right = widget.atRight;
     return TitleBarDoubleClick(
       child: SizedBox(
         height: AppMetrics.titleBarHeight,
         child: Row(
+          textDirection: right ? TextDirection.rtl : TextDirection.ltr,
           children: [
             const Spacer(),
             SidebarIconButton(
-              icon: Codicons.layoutSidebarLeft,
+              icon: right
+                  ? Codicons.layoutSidebarRight
+                  : Codicons.layoutSidebarLeft,
               tooltip: context.l10n.windowHideSidebar,
               command: 'workbench.action.toggleSidebarVisibility',
               onTap: widget.onCollapse,
@@ -1417,6 +1435,17 @@ class _SidebarState extends State<Sidebar>
           icon: Icons.emoji_emotions_outlined,
           onSelected: () => _openHostIconPicker(current),
         ),
+        // Its agents' tools for this machine (local_tools.dart).
+        if (!RemoteLocation.isWsl(current))
+          SidebarMenuItem(
+            l10n.remoteLocalAccess,
+            icon: Codicons.vm,
+            checked: RemoteHostSettings.instance.localAccess(current),
+            onSelected: () => RemoteHostSettings.instance.setLocalAccess(
+              current,
+              !RemoteHostSettings.instance.localAccess(current),
+            ),
+          ),
         if (ssh.state == SshHostState.connected)
           SidebarMenuItem(
             l10n.sidebarDisconnectHost,
@@ -2289,9 +2318,15 @@ class _SidebarState extends State<Sidebar>
         widget.setup == null) {
       return const SizedBox.shrink();
     }
-    // No line over it: the list fades out above it instead.
+    // No line over it: the list fades out above it instead. Its buttons'
+    // middle where the row under the conversation's card has its own.
     return Padding(
-      padding: const EdgeInsets.all(6),
+      padding: const EdgeInsets.fromLTRB(
+        6,
+        6,
+        6,
+        (Islands.belowHeight - _footerRowHeight) / 2,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2300,29 +2335,37 @@ class _SidebarState extends State<Sidebar>
     );
   }
 
+  /// The footer's buttons' row: the archived toggle's height.
+  static const _footerRowHeight = 26.0;
+
   Widget _buildFooterButtons(
     int count,
     VoidCallback? settings,
     Widget? update,
   ) {
-    return Row(
-      children: [
-        Expanded(
-          child: count == 0
-              ? const SizedBox.shrink()
-              : _buildArchivedToggle(count),
-        ),
-        if (update != null) ...[const SizedBox(width: 4), update],
-        if (settings != null) ...[
-          const SizedBox(width: 4),
-          SidebarIconButton(
-            icon: Codicons.settingsGear,
-            tooltip: context.l10n.settingsTitle,
-            command: openSettingsCommandId,
-            onTap: settings,
+    // As high with the archived toggle as without: the buttons where the
+    // conversation's branch is beside it.
+    return SizedBox(
+      height: _footerRowHeight,
+      child: Row(
+        children: [
+          Expanded(
+            child: count == 0
+                ? const SizedBox.shrink()
+                : _buildArchivedToggle(count),
           ),
+          if (update != null) ...[const SizedBox(width: 4), update],
+          if (settings != null) ...[
+            const SizedBox(width: 4),
+            SidebarIconButton(
+              icon: Codicons.settingsGear,
+              tooltip: context.l10n.settingsTitle,
+              command: openSettingsCommandId,
+              onTap: settings,
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
@@ -2392,7 +2435,7 @@ class _SidebarState extends State<Sidebar>
 
   Widget _buildArchivedLabel(int count, bool active) {
     return Container(
-      height: 26,
+      height: _footerRowHeight,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
         color: active ? AppColors.hover : Colors.transparent,
@@ -2468,19 +2511,15 @@ class _NewAgentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The agent sessions window's New Session button, in the side panel
-    // rail's colors (its surface and line, the text; a toolbar button's
-    // hover over it): a theme's own for it can all but vanish (One Dark
-    // Pro's, see-through on a line as dark as the sidebar). Its hover
-    // with the keys of New Agent, which does the same (a folder first,
-    // without one).
-    final colors = themeColors;
+    // The agent sessions window's New Session button, as a little card on
+    // the window's base (the islands' color and outline), hovered as rows
+    // on a card are (the text's color faintly over it): a theme's widget
+    // or toolbar colors are of no part of the window, and can all but
+    // vanish or stand out of place. Its hover with the keys of New Agent,
+    // which does the same (a folder first, without one).
     final foreground = AppColors.text;
-    final surface = AppColors.surface;
-    final hover = Color.alphaBlend(colors['toolbar.hoverBackground'], surface);
-    // A see-through surface fades in as the hover's own color: a fade
-    // from another (a theme's #ff000000) would pass through it.
-    final idle = surface.a == 0 ? hover.withValues(alpha: 0) : surface;
+    final card = AppColors.code;
+    final hover = Color.alphaBlend(AppColors.bubbleHover, card);
     return IdeHover(
       message: ChatKeys.titleWithKey(
         context.l10n.sidebarNewAgent,
@@ -2497,9 +2536,9 @@ class _NewAgentButton extends StatelessWidget {
             height: 30,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color: hovered ? hover : idle,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppColors.partBorder),
+              color: hovered ? hover : card,
+              borderRadius: BorderRadius.circular(Islands.controlRadius),
+              border: Border.all(color: Islands.border),
             ),
             child: Row(
               children: [
@@ -3754,11 +3793,8 @@ class _ThreadRow extends StatelessWidget {
                     : relativeTime(thread.updatedAt, DateTime.now(), l10n),
                 textAlign: TextAlign.right,
                 maxLines: 1,
-                // The color of the buttons it gives way to on hover.
-                style: TextStyle(
-                  color: selected ? foreground : AppColors.textMuted,
-                  fontSize: 11,
-                ),
+                // A step under the title's, selected or not.
+                style: TextStyle(color: AppColors.textFaint, fontSize: 11),
               ),
             ),
           ),
@@ -4075,7 +4111,7 @@ class SidebarIconButton extends StatelessWidget {
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(5),
               ),
-              child: switch (Icon(
+              child: switch (AppIcon(
                 icon,
                 size: size * 0.65,
                 color: hovered ? AppColors.text : AppColors.textMuted,

@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
-import '../../browser/browser_bridge.dart';
 import '../../ide/file_service.dart';
+import '../../ide/git/git_branch_tree.dart' show IdeGitFavoriteBranches;
 import '../../ide/git/git_repository.dart';
 import '../../ide/git/ide_scm_view.dart' show IdeScmSession;
 import '../../ide/ide_code_editor.dart' show IdeCodeHighlights;
@@ -64,10 +64,52 @@ class SidePanelTab {
 /// The side panel's pages, each a list at the left and the tabs it opened
 /// at the right: the project's files, the agent's changes, its background
 /// commands; and the plan the agent wrote, alone, while there is one.
-/// The browser's page is there once a browser of the user's has connected
-/// (see lib/browser/browser_bridge.dart). The usage page: what the
-/// conversation took of its upstream (see lib/usage/).
-enum SidePanelSection { files, changes, terminal, usage, browser, plan }
+/// The usage page: what the conversation took of its upstream (see
+/// lib/usage/).
+enum SidePanelSection {
+  files,
+  changes,
+  terminal,
+  usage,
+  plan,
+
+  /// An SSH project's ports forwarded (see PortsView).
+  ports,
+}
+
+/// How the agent window lays out, from its left: the sidebar (the
+/// conversations' list), the conversations, the side panel. Each of the
+/// window's conversations alike; kept between runs.
+enum ChatLayout {
+  /// Sidebar, conversations, side panel.
+  sidebarChatPanel(sidebarAtRight: false, panelAtLeft: false),
+
+  /// Sidebar, side panel, conversations.
+  sidebarPanelChat(sidebarAtRight: false, panelAtLeft: true),
+
+  /// Side panel, conversations, sidebar: the first, mirrored.
+  panelChatSidebar(sidebarAtRight: true, panelAtLeft: true),
+
+  /// Conversations, side panel, sidebar: the second, mirrored.
+  chatPanelSidebar(sidebarAtRight: true, panelAtLeft: false);
+
+  const ChatLayout({required this.sidebarAtRight, required this.panelAtLeft});
+
+  /// The sidebar at the window's right, not its left.
+  final bool sidebarAtRight;
+
+  /// The side panel at the conversations' left, not their right.
+  final bool panelAtLeft;
+
+  static ChatLayout of({
+    required bool sidebarAtRight,
+    required bool panelAtLeft,
+  }) => values.firstWhere(
+    (layout) =>
+        layout.sidebarAtRight == sidebarAtRight &&
+        layout.panelAtLeft == panelAtLeft,
+  );
+}
 
 /// The pages there whether or not there is anything on them: not the
 /// plan's, there only once the agent wrote one.
@@ -89,8 +131,6 @@ class SidePanelTabs {
   /// without a plan.
   SidePanelSection get shown => switch (section) {
     SidePanelSection.plan when plan == null => SidePanelSection.changes,
-    SidePanelSection.browser when !BrowserBridge.instance.used =>
-      SidePanelSection.changes,
     _ => section,
   };
 
@@ -116,7 +156,7 @@ class SidePanelTabs {
     SidePanelSection.changes => activeDiff,
     SidePanelSection.terminal ||
     SidePanelSection.usage ||
-    SidePanelSection.browser => null,
+    SidePanelSection.ports => null,
     SidePanelSection.plan => plan,
   };
 }
@@ -154,7 +194,12 @@ class AgentSidePanel extends ChangeNotifier {
     }
     if (state?['listShown'] case final bool shown) _listShown = shown;
     if (state?['changesAsTree'] case final bool tree) _changesAsTree = tree;
-    if (state?['atLeft'] case final bool left) _atLeft = left;
+    if (state?['atLeft'] case final bool left) {
+      _layout = ChatLayout.of(sidebarAtRight: false, panelAtLeft: left);
+    }
+    if (state?['layout'] case final String name) {
+      _layout = ChatLayout.values.asNameMap()[name] ?? _layout;
+    }
     if (state?['searches'] case final Map<Object?, Object?> searches) {
       for (final MapEntry(:key, :value) in searches.entries) {
         if (value is Map) _keptSearches['$key'] = value.cast<String, Object?>();
@@ -169,14 +214,21 @@ class AgentSidePanel extends ChangeNotifier {
   /// and Never) are kept, as the IDE keeps them; none under test.
   final UserSettings? settings;
 
-  /// Each repository's commit message, and its commit being written, kept
-  /// while the panel is (as the IDE's Source Control view keeps its own).
-  final Map<IdeGitRepository, IdeScmSession> _scm = {};
+  /// Each conversation's own of each repository: its commit message, its
+  /// commit being written, the log's row and changes selected; kept while
+  /// the panel is (as the IDE's Source Control view keeps its own).
+  final Map<Object, Map<IdeGitRepository, IdeScmSession>> _scm = Map.identity();
 
-  /// The commit message and choices of [git]; its changes as a tree or a
-  /// list as last picked ([changesAsTree]).
-  IdeScmSession scmOf(IdeGitRepository git) =>
-      _scm[git] ??= IdeScmSession(settings: settings)..treeView = changesAsTree;
+  /// The favorite branches, the same in every conversation.
+  final IdeGitFavoriteBranches _favoriteBranches = IdeGitFavoriteBranches();
+
+  /// [conversation]'s commit message, choices and log of [git]; its
+  /// changes as a tree or a list as last picked ([changesAsTree]).
+  IdeScmSession scmOf(Object conversation, IdeGitRepository git) =>
+      (_scm[conversation] ??= {})[git] ??= IdeScmSession(
+        settings: settings,
+        favoriteBranches: _favoriteBranches,
+      )..treeView = changesAsTree;
 
   /// The repositories folded under their headers on the changes page of
   /// each project (by its folder), as Source Control's.
@@ -219,18 +271,27 @@ class AgentSidePanel extends ChangeNotifier {
   bool get changesAsTree => _changesAsTree;
   bool _changesAsTree = true;
 
-  /// Whether it is at the conversations' left, not their right (Move Side
-  /// Panel Left / Right): it keeps its width and pages there.
-  bool get atLeft => _atLeft;
-  bool _atLeft = false;
+  /// Where it, the sidebar and the conversations are in the window.
+  ChatLayout get layout => _layout;
+  ChatLayout _layout = ChatLayout.sidebarChatPanel;
 
-  set atLeft(bool left) {
-    if (left == _atLeft) return;
-    _atLeft = left;
+  set layout(ChatLayout layout) {
+    if (layout == _layout) return;
+    _layout = layout;
     _changed = true;
     notifyListeners();
     onSave?.call();
   }
+
+  /// Whether it is at the conversations' left, not their right (Move Side
+  /// Panel Left / Right): it keeps its width and pages there, the sidebar
+  /// where it is.
+  bool get atLeft => _layout.panelAtLeft;
+
+  set atLeft(bool left) => layout = ChatLayout.of(
+    sidebarAtRight: _layout.sidebarAtRight,
+    panelAtLeft: left,
+  );
 
   final Expando<SidePanelTabs> _tabs = Expando();
 
@@ -656,6 +717,16 @@ class AgentSidePanel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Puts [tab] at [index] among [conversation]'s others on its page (a
+  /// tab dragged).
+  void moveTab(Object conversation, SidePanelTab tab, int index) {
+    final tabs = tabsOf(conversation);
+    final list = tab.diff ? tabs.diffs : tabs.files;
+    if (!list.remove(tab)) return;
+    list.insert(index.clamp(0, list.length), tab);
+    notifyListeners();
+  }
+
   /// Brings [tab] to the front for [conversation], on its page.
   void activate(Object conversation, SidePanelTab tab) {
     final tabs = tabsOf(conversation);
@@ -743,7 +814,7 @@ class AgentSidePanel extends ChangeNotifier {
       // Its tabs are the terminals themselves, killed by their own Close.
       case SidePanelSection.terminal ||
           SidePanelSection.usage ||
-          SidePanelSection.browser:
+          SidePanelSection.ports:
         break;
     }
     hide();
@@ -755,7 +826,7 @@ class AgentSidePanel extends ChangeNotifier {
     'listWidth': _listWidth,
     'listShown': _listShown,
     'changesAsTree': _changesAsTree,
-    if (_atLeft) 'atLeft': true,
+    if (_layout != ChatLayout.sidebarChatPanel) 'layout': _layout.name,
     if (_keptSearches.isNotEmpty) 'searches': {..._keptSearches},
   };
 
@@ -773,9 +844,12 @@ class AgentSidePanel extends ChangeNotifier {
     for (final node in _focusNodes.values) {
       node.dispose();
     }
-    for (final scm in _scm.values) {
-      scm.dispose();
+    for (final sessions in _scm.values) {
+      for (final scm in sessions.values) {
+        scm.dispose();
+      }
     }
+    _favoriteBranches.dispose();
     for (final explorer in _explorers.values) {
       explorer.dispose();
     }

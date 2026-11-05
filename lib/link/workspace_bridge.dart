@@ -155,12 +155,15 @@ class WorkspaceBridge {
   // --- Ids ------------------------------------------------------------------
 
   /// Each agent's id for the phones: its session's, else one given here
-  /// (a new agent's, until it has one), kept for the run.
+  /// (a new agent's, until it has one), kept for the run. Those given here
+  /// are this run's alone: a phone keeps what it had of the last run's
+  /// `new-0`, not to be shown as this one's.
   static final Expando<String> _ids = Expando('link id');
   static int _nextId = 0;
+  static final _run = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
 
   static String idOf(AgentThread thread) =>
-      _ids[thread] ??= thread.id ?? 'new-${_nextId++}';
+      _ids[thread] ??= thread.id ?? 'new-$_run-${_nextId++}';
 
   AgentThread _thread(Object? id) {
     if (id is String) {
@@ -181,6 +184,13 @@ class WorkspaceBridge {
     }
     throw LinkRemoteException(LinkErrors.notFound, 'No project $id');
   }
+
+  /// Where the files [params] ask for are: a project's, or a bot's (its
+  /// folder, where its agent works; any file by its full path).
+  Project _filesProject(Map<String, Object?> params) => switch (params['bot']) {
+    final Object id => workspace.projectAt(_bot(id).folder),
+    _ => _project(params['project']),
+  };
 
   final Map<String, ProjectFiles> _files = {};
 
@@ -558,19 +568,24 @@ class WorkspaceBridge {
         return null;
       case LinkMethods.files:
         return _listFiles(_project(params['project']));
+      case LinkMethods.folder:
+        return _listFolder(
+          _project(params['project']),
+          params['path'] as String? ?? '',
+        );
       case LinkMethods.read:
         return _readFile(
-          _project(params['project']),
+          _filesProject(params),
           params['path'] as String? ?? '',
         );
       case LinkMethods.image:
         return _readImage(
-          _project(params['project']),
+          _filesProject(params),
           params['path'] as String? ?? '',
         );
       case LinkMethods.download:
         return _download(
-          _project(params['project']),
+          _filesProject(params),
           params['path'] as String? ?? '',
         );
       case LinkMethods.extensions:
@@ -923,6 +938,43 @@ class WorkspaceBridge {
           if (change.kind != FileChangeKind.deleted)
             ?_phonePath(project, change.path): change.kind.name,
       },
+    };
+  }
+
+  /// What is in [project]'s folder at [path], all of it: the phone shows
+  /// what Git ignores too, as the Explorer does.
+  Future<Map<String, Object?>> _listFolder(Project project, String path) async {
+    await _reach(project);
+    final roots = _rootsOf(project);
+    // A workspace's root: its folders, by the names the phone has them.
+    if (path.isEmpty && roots.first.$1.isNotEmpty) {
+      return {
+        'folders': [for (final (name, _) in roots) name],
+        'files': const <String>[],
+      };
+    }
+    final full = path.isEmpty
+        ? roots.first.$2
+        : roots.where((r) => r.$1 == path).firstOrNull?.$2 ??
+              _fullPath(project, path);
+    if (full == null) {
+      throw LinkRemoteException(LinkErrors.notFound, 'No folder $path');
+    }
+    final List<IdeFile> entries;
+    try {
+      entries = await _filesOf(project).files.list(full);
+    } on Object {
+      throw LinkRemoteException(LinkErrors.notFound, 'No folder $path');
+    }
+    return {
+      'folders': [
+        for (final entry in entries)
+          if (entry.isDirectory) entry.name,
+      ],
+      'files': [
+        for (final entry in entries)
+          if (!entry.isDirectory) entry.name,
+      ],
     };
   }
 

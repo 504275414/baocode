@@ -665,17 +665,7 @@
   "cmdSidePanelCloseTab": "Close Side Panel Tab",
   "sidePanelFiles": "Files",
   "sidePanelTerminal": "Terminal",
-  "sidePanelBrowser": "Browser",
-  "@sidePanelBrowser": {"description": "The side panel's browser page, there once the browser plugin is installed."},
-  "browserNotConnected": "No browser is connected. Add BaoCode's extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.",
-  "browserNoSharedTab": "No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.",
   "browserOtherApp": "Another BaoCode is connected to the browser.",
-  "browserSharedTabs": "Shared Tabs",
-  "browserReload": "Reload",
-  "browserShowInBrowser": "Show in Browser",
-  "browserDetached": "The browser stopped letting BaoCode see this tab.",
-  "browserReconnect": "Reconnect",
-  "browserShowInPanel": "Show in Side Panel",
   "browserWatchTitle": "Watching you in the browser",
   "@browserWatchTitle": {"description": "The card in the conversation while an agent watches the user do something in their browser (browser_watch), recording it."},
   "browserWatchHint": "Do it in the BaoCode tab of your browser. When you're done, click Done here or the BaoCode button in the browser's toolbar.",
@@ -721,8 +711,11 @@
     "description": "Tooltip of the title bar button that shows the side panel."
   },
   "sidePanelHide": "Hide side panel",
-  "sidePanelMoveLeft": "Move to the Left of the Conversation",
-  "sidePanelMoveRight": "Move to the Right of the Conversation",
+  "chatLayout": "Layout",
+  "chatLayoutSidebarChatPanel": "Sidebar · Chat · Panel",
+  "chatLayoutSidebarPanelChat": "Sidebar · Panel · Chat",
+  "chatLayoutPanelChatSidebar": "Panel · Chat · Sidebar",
+  "chatLayoutChatPanelSidebar": "Chat · Panel · Sidebar",
   "@sidePanelHide": {
     "description": "Tooltip of the button that hides the side panel."
   },
@@ -1095,6 +1088,14 @@
   "btwCommandDetail": "Ask in a conversation of its own, beside this one",
   "@btwCommandDetail": {
     "description": "The /btw command in the composer's command list: what follows is asked in a new conversation copied from this one, listed under it."
+  },
+  "forkCommandDetail": "Fork this conversation and open the copy",
+  "@forkCommandDetail": {
+    "description": "The /fork command in the composer's command list: the conversation is copied into a new one (as the sidebar's Fork), which opens; what follows the command is sent there."
+  },
+  "forkUnavailable": "This conversation can't be forked: it needs a message first, and its agent has to support forking.",
+  "@forkUnavailable": {
+    "description": "Shown when /fork is sent in a conversation that cannot be copied (nothing sent yet, or its kernel cannot fork)."
   },
   "sidebarFoldAsides": "Hide /btw Conversations",
   "@sidebarFoldAsides": {
@@ -2452,7 +2453,7 @@
   "@generalSettingsClaudeCore": {
     "description": "Settings → General → Claude Code row: what runs Claude Code sessions, BaoCode's built-in core (written in Dart) or the Claude Code CLI."
   },
-  "generalSettingsClaudeCoreDescription": "Claude Code CLI: Anthropic's own program, with this machine's sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.",
+  "generalSettingsClaudeCoreDescription": "Claude Code CLI: Anthropic's own program, with this machine's sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. By default, the CLI where this machine has Claude Code, else the built-in core; the CLI, picked where there is none, is downloaded for you. Changes apply to new sessions.",
   "generalSettingsClaudeCoreBuiltin": "Built-in",
   "@generalSettingsClaudeCoreBuiltin": {
     "description": "Claude Code core choice: BaoCode's own agent core, written in Dart and run inside the app."
@@ -4391,7 +4392,7 @@
       }
     }
   },
-  "claudePathMissing": "None found yet: Claude Code is downloaded as the first conversation starts.",
+  "claudePathMissing": "None found yet: with the Claude Code CLI picked, it is downloaded as the first conversation starts.",
   "generalSettingsIdeWindows": "Fast Ide Windows",
   "generalSettingsIdeWindowsDescription": "Where the Fast Ide opens: in the main window in place of the chat, one folder at a time, or in windows of its own, one per folder (New Window, ⇧⌘N / Ctrl+Shift+N, opens an empty one). Applies at once. (window.ideWindows)",
   "generalSettingsIdeWindowsSeparate": "Separate windows",
@@ -5818,6 +5819,15 @@
       },
       "host": {
         "type": "String"
+      }
+    }
+  },
+  "remoteStatusSystem": "System: {platform}",
+  "@remoteStatusSystem": {
+    "placeholders": {
+      "platform": {
+        "type": "String",
+        "example": "Windows x64"
       }
     }
   },
@@ -7341,9 +7351,6 @@
   "modelWelcomeStart": "Start Chatting",
   "healthNoModel": "Pick a model to start: add an upstream and its models are ready to use.",
   "modelSetUp": "Set Up a Model",
-  "claudeCoreHint": "This chat runs on BaoCode's built-in core. We recommend the Claude Code core for the fullest experience; it's downloaded for you if needed.",
-  "claudeCoreHintSwitch": "Switch to Claude Code",
-  "claudeCoreHintLater": "Not Now",
   "remoteAddServer": "Add SSH Server...",
   "remoteEditServer": "Edit",
   "settingsSectionSsh": "SSH Servers",
@@ -8193,6 +8200,8 @@
   "gitStashNone": "No stashes",
   "gitStashTab": "Stash",
   "gitCommitTab": "Commit",
+  "gitCommitPanelFold": "Fold",
+  "gitCommitPanelUnfold": "Unfold",
   "gitStashSelected": "Stash Selected Files…",
   "gitCommitIgnored": "Ignored Files",
   "gitCommitShowIgnored": "Show Ignored Files",
@@ -8629,5 +8638,77 @@
   "ustatUpstreamRates": "Upstream rates",
   "ustatUpstreamRatesDetail": "The models of these upstreams without a price of their own: the same model's price elsewhere, times the rate.",
   "ustatUpstreamRateClear": "Clear the rate",
-  "ustatContextUnpickHint": "Click again to unpick: back to the context as it is now"
+  "ustatContextUnpickHint": "Click again to unpick: back to the context as it is now",
+  "localRunTitle": "Run on this computer",
+  "localRunReason": "The agent on {host} wants to run this command on your computer ({system}), not on {host}.",
+  "@localRunReason": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      },
+      "system": {
+        "type": "String"
+      }
+    }
+  },
+  "localRunAlways": "Always allow for {host}",
+  "@localRunAlways": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteLocalAccess": "Allow Remote Agents to Act on This Computer",
+  "remoteLocalAccessDetail": "Its agents may run commands on this computer (asking you each time), copy files here and there and forward ports.",
+  "sidePanelPorts": "Ports",
+  "portsEmpty": "No ports are forwarded. A server on {host} that prints its http://localhost address is forwarded here on its own.",
+  "@portsEmpty": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "portsAdd": "Forward a Port",
+  "portsCopy": "Copy Address",
+  "portsOpen": "Open in Browser",
+  "portsStop": "Stop Forwarding",
+  "portsHostToHere": "{host} → this computer",
+  "@portsHostToHere": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "portsHereToHost": "This computer → {host}",
+  "@portsHereToHost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "portsAuto": "Auto",
+  "portsPort": "Port",
+  "portsListen": "Listen on (optional)",
+  "portsForward": "Forward",
+  "portsCopied": "Copied {address}",
+  "@portsCopied": {
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "branchBarFolder": "{path}\nClick to copy its path",
+  "@branchBarFolder": {
+    "description": "Hover of the project folder shown under the chat in place of a Git branch (no repository): its path, then that a click copies it.",
+    "placeholders": {"path": {"type": "String"}}
+  },
+  "branchBarPathCopied": "Path copied",
+  "@branchBarPathCopied": {
+    "description": "Hover of the project folder under the chat once clicked: its path was copied."
+  }
 }

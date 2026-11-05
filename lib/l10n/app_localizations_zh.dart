@@ -1462,36 +1462,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidePanelTerminal => '终端';
 
   @override
-  String get sidePanelBrowser => '浏览器';
-
-  @override
-  String get browserNotConnected =>
-      '没有连接浏览器。在 Chrome（或 Edge、Brave、Arc）中添加 BaoCode 扩展后，agent 就能使用你共享给它的标签页。';
-
-  @override
-  String get browserNoSharedTab =>
-      '还没有共享的标签页。让 agent 打开网页，或在浏览器工具栏点 BaoCode 按钮共享当前标签页。';
-
-  @override
   String get browserOtherApp => '另一个 BaoCode 已连接浏览器。';
-
-  @override
-  String get browserSharedTabs => '共享的标签页';
-
-  @override
-  String get browserReload => '重新加载';
-
-  @override
-  String get browserShowInBrowser => '在浏览器中显示';
-
-  @override
-  String get browserDetached => '浏览器已停止让 BaoCode 查看这个标签页。';
-
-  @override
-  String get browserReconnect => '重新连接';
-
-  @override
-  String get browserShowInPanel => '在侧边栏查看';
 
   @override
   String get browserWatchTitle => '正在看你在浏览器里操作';
@@ -1646,10 +1617,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidePanelHide => '隐藏侧栏';
 
   @override
-  String get sidePanelMoveLeft => '移到对话左侧';
+  String get chatLayout => '布局';
 
   @override
-  String get sidePanelMoveRight => '移到对话右侧';
+  String get chatLayoutSidebarChatPanel => '侧栏 · 对话 · 面板';
+
+  @override
+  String get chatLayoutSidebarPanelChat => '侧栏 · 面板 · 对话';
+
+  @override
+  String get chatLayoutPanelChatSidebar => '面板 · 对话 · 侧栏';
+
+  @override
+  String get chatLayoutChatPanelSidebar => '对话 · 面板 · 侧栏';
 
   @override
   String get sidePanelChanges => '变更';
@@ -1985,6 +1965,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get btwCommandDetail => '在旁边另开一个对话提问';
+
+  @override
+  String get forkCommandDetail => 'Fork 当前对话并打开新对话';
+
+  @override
+  String get forkUnavailable => '此对话暂不能 Fork：要先发过消息，且所用的智能体支持 Fork。';
 
   @override
   String get sidebarFoldAsides => '收起 /btw 子对话';
@@ -3512,7 +3498,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get generalSettingsClaudeCoreDescription =>
-      'Claude Code CLI：Anthropic 官方程序，沿用本机的登录和配置，用 Claude 订阅请选它。内置：BaoCode 自带，只用 设置 → 模型 里添加的模型。默认用 CLI，本机没有时会自动下载。改动对新开的会话生效。';
+      'Claude Code CLI：Anthropic 官方程序，沿用本机的登录和配置，用 Claude 订阅请选它。内置：BaoCode 自带，只用 设置 → 模型 里添加的模型。默认：本机装有 Claude Code 时用 CLI，没有时用内置内核；选 CLI 而本机没有时会自动下载。改动对新开的会话生效。';
 
   @override
   String get generalSettingsClaudeCoreBuiltin => '内置';
@@ -5651,7 +5637,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get claudePathMissing => '尚未找到：开始第一个对话时会自动下载 Claude Code。';
+  String get claudePathMissing => '尚未找到：选用 Claude Code CLI 后，开始第一个对话时会自动下载。';
 
   @override
   String get generalSettingsIdeWindows => 'Fast Ide 窗口';
@@ -7585,6 +7571,11 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String remoteStatusTooltip(String kind, String host) {
     return '已通过 $kind 连接到 $host';
+  }
+
+  @override
+  String remoteStatusSystem(String platform) {
+    return '系统：$platform';
   }
 
   @override
@@ -9813,16 +9804,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelSetUp => '设置模型';
 
   @override
-  String get claudeCoreHint =>
-      '当前用的是 BaoCode 内置内核。推荐换成 Claude Code 内核，体验更完整；没安装的话会自动帮你下载。';
-
-  @override
-  String get claudeCoreHintSwitch => '切换到 Claude Code';
-
-  @override
-  String get claudeCoreHintLater => '暂不';
-
-  @override
   String get remoteAddServer => '新增 SSH 服务器…';
 
   @override
@@ -11590,6 +11571,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get gitCommitTab => '提交';
 
   @override
+  String get gitCommitPanelFold => '折叠';
+
+  @override
+  String get gitCommitPanelUnfold => '展开';
+
+  @override
   String get gitStashSelected => '暂存选中的文件…';
 
   @override
@@ -12825,4 +12812,79 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ustatContextUnpickHint => '再次点击取消选中，回到当前上下文';
+
+  @override
+  String get localRunTitle => '在本机执行';
+
+  @override
+  String localRunReason(String host, String system) {
+    return '$host 上的 agent 要在你的电脑（$system）上执行这条命令，不是在 $host 上执行。';
+  }
+
+  @override
+  String localRunAlways(String host) {
+    return '这台主机一直允许';
+  }
+
+  @override
+  String get remoteLocalAccess => '允许远程 agent 操作本机';
+
+  @override
+  String get remoteLocalAccessDetail =>
+      '它的 agent 可以在本机执行命令（每次都会问你）、在两边之间传文件、转发端口。';
+
+  @override
+  String get sidePanelPorts => '端口';
+
+  @override
+  String portsEmpty(String host) {
+    return '还没有转发的端口。$host 上的服务打印出 http://localhost 地址时，会自动转发到本机。';
+  }
+
+  @override
+  String get portsAdd => '转发端口';
+
+  @override
+  String get portsCopy => '复制地址';
+
+  @override
+  String get portsOpen => '在浏览器打开';
+
+  @override
+  String get portsStop => '停止转发';
+
+  @override
+  String portsHostToHere(String host) {
+    return '$host → 本机';
+  }
+
+  @override
+  String portsHereToHost(String host) {
+    return '本机 → $host';
+  }
+
+  @override
+  String get portsAuto => '自动';
+
+  @override
+  String get portsPort => '端口';
+
+  @override
+  String get portsListen => '监听端口（可选）';
+
+  @override
+  String get portsForward => '转发';
+
+  @override
+  String portsCopied(String address) {
+    return '已复制 $address';
+  }
+
+  @override
+  String branchBarFolder(String path) {
+    return '$path\n点击复制路径';
+  }
+
+  @override
+  String get branchBarPathCopied => '已复制路径';
 }

@@ -453,7 +453,11 @@ class WorkbenchThemeService extends ChangeNotifier
       'theme',
       '${theme.settingsId} (${theme.type.name}'
           '${theme.isLoaded ? '' : ', not loaded'}'
-          '${silent ? ', restored' : preview ? ', preview' : ''})',
+          '${silent
+              ? ', restored'
+              : preview
+              ? ', preview'
+              : ''})',
     );
     if (silent) return;
     notifyListeners();

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/workspace/islands.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/side_panel/side_panel_view.dart';
 import 'package:baocode/chat/composer/composer.dart';
@@ -155,34 +156,40 @@ void main() {
     expect(back, open);
   }, variant: _windows);
 
-  testWidgets('over the IDE it is the IDE\'s title bar: no line under it, '
-      'and the way back to the chat on the right', (tester) async {
+  testWidgets('over the IDE it is the IDE\'s title bar, and over the '
+      'conversations their window\'s top: no line under it either way; the '
+      'way back to the chat on the right', (tester) async {
     final (workspace, calls) = await pumpWindowsApp(tester);
     final header = find.byType(WindowHeader);
-    BoxBorder? line() =>
-        (tester
-                    .widget<DecoratedBox>(
-                      find
-                          .descendant(
-                            of: header,
-                            matching: find.byType(DecoratedBox),
-                          )
-                          .first,
-                    )
-                    .decoration
-                as BoxDecoration)
-            .border;
+    // A line along its foot, of anything in it as wide as it.
+    bool line() {
+      final width = tester.getSize(header).width;
+      final boxes = find.descendant(
+        of: header,
+        matching: find.byType(DecoratedBox),
+      );
+      return boxes.evaluate().any(
+        (element) =>
+            (element.size?.width ?? 0) >= width - .5 &&
+            switch ((element.widget as DecoratedBox).decoration) {
+              BoxDecoration(border: Border(:final bottom)) =>
+                bottom != BorderSide.none,
+              _ => false,
+            },
+      );
+    }
+
     final back = find.descendant(
       of: header,
       matching: find.byType(BackToChatButton),
     );
-    expect(line(), isNotNull);
+    expect(line(), isFalse);
     expect(back, findsNothing);
 
     workspace.layout = WorkspaceLayout.ide;
     await tester.pump();
     await tester.pump();
-    expect(line(), isNull);
+    expect(line(), isFalse);
     expect(back, findsOneWidget);
     final button = tester.getRect(back);
     expect(button.height, 22);
@@ -498,10 +505,9 @@ void main() {
             widget.command == 'workbench.action.toggleSidebarVisibility',
       ),
     );
-    final panelToggle = find.descendant(
-      of: header,
-      matching: find.byType(SidePanelToggle),
-    );
+    // On the conversation's card; in the header where that has the title,
+    // the window narrow.
+    final panelToggle = find.byType(SidePanelToggle);
     final sash = find.byKey(const ValueKey('side-panel-sash'));
     Future<void> resize(double width) async {
       tester.view.physicalSize = Size(width, 900);
@@ -736,8 +742,10 @@ void main() {
     );
   }, variant: _windows);
 
-  testWidgets('on macOS the chat\'s own buttons are at the window\'s right, '
-      'in the IDE title bar\'s order', (tester) async {
+  testWidgets('on macOS the window\'s buttons are at its right, in the IDE '
+      'title bar\'s order; the conversation\'s on its card, under them', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -749,11 +757,23 @@ void main() {
     final sidePanel = rectOf(SidePanelToggle);
     final pin = rectOf(PinWindowButton);
     final open = rectOf(OpenInEditorButton);
-    // The side panel's toggle, the pin, then the editor's button last, as
-    // the IDE's panel and chat toggles, its pin and Back to Chat.
-    expect(sidePanel.right, lessThan(pin.left));
+    // The pin, then the editor's button last, as the IDE's pin and Back to
+    // Chat; the side panel's toggle, as its chat toggle, the conversation's:
+    // along the top of its card, under them, at its right end.
     expect(pin.right, lessThan(open.left));
-    // At the window's end, not the conversation's column's.
+    final card = tester.getRect(
+      find.descendant(
+        of: find.byType(ChatScreen),
+        matching: find.byType(Island),
+      ),
+    );
+    expect(sidePanel.top, greaterThan(card.top));
+    expect(sidePanel.bottom, lessThan(card.top + ChatScreen.cardHeaderHeight));
+    expect(sidePanel.top, greaterThan(open.bottom));
+    // Its right edge on the rail's under it.
+    expect(sidePanel.right, card.right - AgentSidePanelArea.railRight);
+    // At the window's end, as far from it as the IDE's Back to Chat (the
+    // card's gap counted in): not its column's.
     expect(open.right, 1400 - 8);
     expect(
       open.right,
