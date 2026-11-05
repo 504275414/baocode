@@ -15,6 +15,9 @@ abstract final class AppPlatform {
   static bool get isLinux =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
 
+  static bool get isAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   /// A desktop window, as opposed to the web. Linux is one: file dialogs and
   /// the shell run here. Native menus stay macOS and Windows (see
   /// WindowControls.hasNativeMenus).

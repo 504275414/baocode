@@ -1,0 +1,70 @@
+name: Build Android Pad APK
+
+on:
+  push:
+    branches: [feature/android-pad]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    name: Build Android Pad APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.9
+          cache: true
+
+      - name: Setup Android bao_iroh prebuilt
+        id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+        continue-on-error: true
+        with:
+          kind: android
+          root: .
+
+      - name: Setup Rust (fallback)
+        if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+        with:
+          dir: packages/bao_iroh/rust
+
+      - name: Fetch Remote Server Dependencies
+        shell: bash
+        run: |
+          mkdir -p build/remote
+          dart run tool/fetch_remote_server.dart || true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APK (Release)
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: |
+          mkdir -p build/out
+          cp build/app/outputs/flutter-apk/app-release.apk build/out/baocode-pad-release.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: baocode-pad-apk
+          path: build/out/baocode-pad-release.apk
+          if-no-files-found: error
+

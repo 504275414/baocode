@@ -19,9 +19,11 @@ abstract final class AppPaths {
 
   /// The platform's place for the app's data: `%APPDATA%\baocode` on
   /// Windows, `~/Library/Application Support/baocode` on macOS,
-  /// `~/.config/baocode` elsewhere. The user may move it: the folder in use is
-  /// `DataDirectory.current`.
+  /// `~/.config/baocode` elsewhere, and `/data/data/dev.baocode.baocode/files` on Android.
   static String dataDir(Map<String, String> environment) {
+    if (Platform.isAndroid) {
+      return '/data/data/dev.baocode.baocode/files';
+    }
     final homeDir = home(environment);
     if (Platform.isWindows) {
       final appData = environment['APPDATA'] ?? '';
