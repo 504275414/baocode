@@ -1,3 +1,4 @@
+import 'code_buddy_storage.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -113,20 +114,26 @@ class ProcessCodeBuddyTransport implements CodeBuddyTransport {
   }
 
   /// Starts `codebuddy --acp` child process with optional working directory.
-  static Future<CodeBuddyTransport> start({String? cwd}) async {
+  static Future<CodeBuddyTransport> start({String? cwd, String? configDir}) async {
     String? validCwd = cwd;
     if (validCwd != null && (validCwd.trim().isEmpty || !Directory(validCwd).existsSync())) {
       validCwd = null;
     }
 
     final executable = resolveExecutable();
-    debugPrint('[CodeBuddy starting] exe: $executable, cwd: $validCwd');
+    final dir = configDir ?? CodeBuddyStorage.defaultConfigDir;
+    CodeBuddyStorage.ensureIsolatedConfigDir(dir);
+    debugPrint('[CodeBuddy starting] exe: $executable, cwd: $validCwd, configDir: $dir');
 
     final process = await Process.start(
       executable,
       ['--acp'],
       workingDirectory: validCwd,
       runInShell: Platform.isWindows,
+      environment: {
+        ...Platform.environment,
+        'CODEBUDDY_CONFIG_DIR': dir,
+      },
     );
     return ProcessCodeBuddyTransport(process);
   }

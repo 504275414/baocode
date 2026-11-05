@@ -3,26 +3,102 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../../platform/data_dir.dart';
 import '../agent_kernel.dart';
 
-/// Reads and manages CodeBuddy sessions stored on this machine (in `~/.codebuddy`).
+/// Reads and manages CodeBuddy sessions stored on this machine in an isolated
+/// BaoCode directory (defaulting to `DataDirectory.current.path/codebuddy`).
 class CodeBuddyStorage implements SessionCatalog {
   const CodeBuddyStorage({this.configDir});
 
-  /// The root `.codebuddy` directory. By default `~/.codebuddy`.
+  /// The root directory for BaoCode's CodeBuddy state.
   final String? configDir;
+
+  /// Default isolated configuration directory for CodeBuddy under BaoCode.
+  static String get defaultConfigDir {
+    final custom = Platform.environment['BAOCODE_CODEBUDDY_DATA_PATH'];
+    if (custom != null && custom.isNotEmpty) return custom;
+    return p.join(DataDirectory.current.path, 'codebuddy');
+  }
+
+  /// Ensures the isolated configuration directory exists and syncs authentication
+  /// and model settings from the user's global `~/.codebuddy` directory.
+  static void ensureIsolatedConfigDir([String? targetDir]) {
+    final dir = targetDir ?? defaultConfigDir;
+    final target = Directory(dir);
+    if (!target.existsSync()) {
+      try {
+        target.createSync(recursive: true);
+      } catch (_) {
+        return;
+      }
+    }
+
+    final env = Platform.environment;
+    final home = env['USERPROFILE'] ?? env['HOME'] ?? '';
+    if (home.isEmpty) return;
+    final globalCodebuddy = p.join(home, '.codebuddy');
+    if (!Directory(globalCodebuddy).existsSync()) return;
+
+    // 1. Sync local_storage (stores authentication tokens)
+    final globalLocalStorage = Directory(p.join(globalCodebuddy, 'local_storage'));
+    final targetLocalStorage = Directory(p.join(dir, 'local_storage'));
+    if (globalLocalStorage.existsSync()) {
+      _copyDirectoryIfNewer(globalLocalStorage, targetLocalStorage);
+    }
+
+    // 2. Sync settings.json, models.json, mcp.json
+    for (final fileName in ['settings.json', 'models.json', 'mcp.json']) {
+      final globalFile = File(p.join(globalCodebuddy, fileName));
+      final targetFile = File(p.join(dir, fileName));
+      if (globalFile.existsSync()) {
+        if (!targetFile.existsSync() ||
+            globalFile.lastModifiedSync().isAfter(targetFile.lastModifiedSync())) {
+          try {
+            globalFile.copySync(targetFile.path);
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
+  static void _copyDirectoryIfNewer(Directory src, Directory dst) {
+    if (!src.existsSync()) return;
+    if (!dst.existsSync()) {
+      try {
+        dst.createSync(recursive: true);
+      } catch (_) {
+        return;
+      }
+    }
+    for (final entity in src.listSync(recursive: false)) {
+      if (entity is File) {
+        final targetFile = File(p.join(dst.path, p.basename(entity.path)));
+        if (!targetFile.existsSync() ||
+            entity.lastModifiedSync().isAfter(targetFile.lastModifiedSync())) {
+          try {
+            entity.copySync(targetFile.path);
+          } catch (_) {}
+        }
+      } else if (entity is Directory) {
+        _copyDirectoryIfNewer(
+          entity,
+          Directory(p.join(dst.path, p.basename(entity.path))),
+        );
+      }
+    }
+  }
 
   String get _root {
     if (configDir case final dir? when dir.isNotEmpty) return dir;
-    final env = Platform.environment;
-    final home = env['USERPROFILE'] ?? env['HOME'] ?? Directory.current.path;
-    return p.join(home, '.codebuddy');
+    return defaultConfigDir;
   }
 
   String get _projectsDir => p.join(_root, 'projects');
 
   @override
   Future<List<ProjectRecord>> projects() async {
+    ensureIsolatedConfigDir(_root);
     final rootDir = Directory(_projectsDir);
     if (!rootDir.existsSync()) return const [];
 
@@ -35,7 +111,6 @@ class CodeBuddyStorage implements SessionCatalog {
           .where((f) => f.path.endsWith('.jsonl'))
           .toList();
 
-      // First pass: try to detect the project's canonical cwd from any session file
       String? fallbackCwd;
       for (final file in jsonlFiles) {
         fallbackCwd = _quickDetectCwd(file);
@@ -102,6 +177,67 @@ class CodeBuddyStorage implements SessionCatalog {
         }
       }
     }
+  }
+
+  /// Copies a session file up to [before] into a new session [into].
+  Future<SessionRecord?> fork(
+    String id,
+    String into, {
+    String? before,
+    String? title,
+  }) async {
+    final rootDir = Directory(_projectsDir);
+    if (!rootDir.existsSync()) return null;
+
+    File? sourceFile;
+    for (final entity in rootDir.listSync().whereType<Directory>()) {
+      final file = File(p.join(entity.path, '$id.jsonl'));
+      if (file.existsSync()) {
+        sourceFile = file;
+        break;
+      }
+    }
+    if (sourceFile == null) return null;
+
+    final lines = sourceFile.readAsLinesSync();
+    if (lines.isEmpty) return null;
+
+    final out = <String>[];
+    String? cwd;
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      try {
+        final json = jsonDecode(trimmed) as Map<String, Object?>;
+        if (json['cwd'] is String) cwd = json['cwd'] as String;
+        if (before != null && (json['id'] == before || json['messageId'] == before)) {
+          break;
+        }
+        json['sessionId'] = into;
+        out.add(jsonEncode(json));
+      } catch (_) {
+        out.add(line);
+      }
+    }
+
+    if (title != null && title.trim().isNotEmpty) {
+      out.add(jsonEncode({
+        'type': 'ai-title',
+        'aiTitle': title.trim(),
+        'sessionId': into,
+      }));
+    }
+
+    final targetFile = File(p.join(sourceFile.parent.path, '$into.jsonl'));
+    targetFile.writeAsStringSync('${out.join('\n')}\n', flush: true);
+
+    return SessionRecord(
+      id: into,
+      title: title ?? 'Fork of $id',
+      updatedAt: DateTime.now(),
+      cwd: cwd ?? Directory.current.path,
+      path: targetFile.path,
+    );
   }
 
   static String? _quickDetectCwd(File file) {
@@ -176,7 +312,6 @@ class CodeBuddyStorage implements SessionCatalog {
         }
       }
 
-      // Skip untouched/empty sessions with no actual user/assistant interaction
       if (!hasActualMessages && summary == null && aiTitle == null) {
         return null;
       }

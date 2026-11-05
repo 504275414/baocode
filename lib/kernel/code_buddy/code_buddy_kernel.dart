@@ -10,6 +10,7 @@ import '../agent_kernel.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import 'code_buddy_transport.dart';
+import 'code_buddy_storage.dart';
 import '../../browser/browser_bridge.dart';
 import '../../browser/browser_tools.dart';
 import '../claude_code/claude_sdk_tools.dart';
@@ -66,7 +67,7 @@ class CodeBuddyKernel
   @override
   final KernelDescriptor descriptor;
   final KernelContext context;
-  final Future<CodeBuddyTransport> Function({String? cwd}) _startTransport;
+  final Future<CodeBuddyTransport> Function({String? cwd, String? configDir}) _startTransport;
 
   CodeBuddyTransport? _transport;
   StreamSubscription<Map<String, Object?>>? _subscription;
@@ -1127,6 +1128,69 @@ class CodeBuddyKernel
           emit(PlanWritten(nextSeq, planText));
         }
     }
+  }
+
+  void _handleSessionInfoUpdate(Map<String, Object?> update) {
+    final meta = update['_meta'] as Map?;
+    final replay = meta?['codebuddy.ai/historyReplay'] as String?;
+    if (replay == 'start') {
+      _replayingHistory = true;
+    } else if (replay == 'end') {
+      _closeThoughtIfOpen();
+      _closeMessageIfOpen();
+      if (_replayingTurnId != null) {
+        emit(TurnEnded(nextSeq, _replayingTurnId!, interrupted: false));
+        _replayingTurnId = null;
+      }
+      _replayingHistory = false;
+      emit(KernelInfoChanged(nextSeq));
+    }
+  }
+
+  void _handleUserMessageChunk(Map<String, Object?> update) {
+    _closeThoughtIfOpen();
+    _closeMessageIfOpen();
+
+    if (_replayingTurnId != null) {
+      emit(TurnEnded(nextSeq, _replayingTurnId!, interrupted: false));
+      _replayingTurnId = null;
+    }
+
+    final messageId = update['messageId'] as String? ??
+        (update['_meta'] as Map?)?['codebuddy.ai/messageId'] as String? ??
+        'turn_${DateTime.now().millisecondsSinceEpoch}';
+
+    String text = '';
+    final images = <ChatImage>[];
+
+    final content = update['content'];
+    if (content is Map) {
+      if (content['type'] == 'text' && content['text'] is String) {
+        text = content['text'] as String;
+      }
+    } else if (content is List) {
+      for (final item in content) {
+        if (item is Map && item['type'] == 'text' && item['text'] is String) {
+          text += (text.isEmpty ? '' : '\n') + (item['text'] as String);
+        }
+      }
+    } else if (content is String) {
+      text = content;
+    }
+
+    _replayingTurnId = messageId;
+    emit(TurnStarted(nextSeq, messageId));
+    emit(
+      ItemUpserted(
+        nextSeq,
+        messageId,
+        UserMessageItem(
+          text: text,
+          images: images,
+          queued: false,
+        ),
+      ),
+    );
   }
 
   void _handleModelUpdate(Map<String, Object?> update) {
