@@ -209,6 +209,7 @@ class DownloadedServerBinaries implements RemoteServerBinaries {
     final client = _client()..connectionTimeout = timeout;
     try {
       final request = await client.getUrl(download.url).timeout(timeout);
+      request.headers.set(HttpHeaders.userAgentHeader, 'BaoCode/1.9.0');
       final response = await request.close().timeout(timeout);
       if (response.statusCode != HttpStatus.ok) {
         await response.drain<void>();
@@ -260,6 +261,7 @@ RemoteServerBinaries? bundledServerBinaries({
   final exeDir = p.dirname(executable);
   final directories = [
     ?environment['BAOCODE_REMOTE_SERVER_DIR'],
+    p.join(DataDirectory.current.path, 'remote'),
     if (Platform.isMacOS) p.join(p.dirname(exeDir), 'Resources', 'remote'),
     p.join(exeDir, 'remote'),
     p.join(exeDir, 'data', 'remote'),

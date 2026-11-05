@@ -1,0 +1,35 @@
+{
+  "version": "1.9.0.26-75ba74c4f0cd",
+  "files": {
+    "linux-x64": {
+      "url": "https://dl.baocode.dev/releases/remote/1.9.0.26-75ba74c4f0cd/baocode-server-linux-x64.gz",
+      "size": 4645082,
+      "sha256": "fd71d52b10b04a85766fd27c3dfb78496485a679aefa210dade99ef2fe69abe6"
+    },
+    "linux-arm64": {
+      "url": "https://dl.baocode.dev/releases/remote/1.9.0.26-75ba74c4f0cd/baocode-server-linux-arm64.gz",
+      "size": 4542331,
+      "sha256": "8ad3e20e0f734fd8a4306723fa5fd53f59d8df453632c0fcb50506b73cb3762a"
+    },
+    "darwin-x64": {
+      "url": "https://dl.baocode.dev/releases/remote/1.9.0.26-75ba74c4f0cd/baocode-server-darwin-x64.gz",
+      "size": 4714159,
+      "sha256": "cbcc3b13fd3e54f7ae92be8bdcfecef7c7124427745871e6620dd048fb4fb584"
+    },
+    "darwin-arm64": {
+      "url": "https://dl.baocode.dev/releases/remote/1.9.0.26-75ba74c4f0cd/baocode-server-darwin-arm64.gz",
+      "size": 4513851,
+      "sha256": "ccdc22e431148dce564e5303576003e14dbc3ba50c23f184c2ad91d72ad8bb14"
+    },
+    "windows-x64": {
+      "url": "https://dl.baocode.dev/releases/remote/1.9.0.26-75ba74c4f0cd/baocode-server-windows-x64.gz",
+      "size": 4658881,
+      "sha256": "fccb3af039f5ab9c990a437ef70ef48f33d0217f2891112c8ab2c491d2c11ff9"
+    },
+    "windows-arm64": {
+      "url": "https://dl.baocode.dev/releases/remote/1.9.0.26-75ba74c4f0cd/baocode-server-windows-arm64.gz",
+      "size": 4587456,
+      "sha256": "87dacae5be249397a799d31f9d25d38a7b668b890ad43e3a500152344512fe51"
+    }
+  }
+}

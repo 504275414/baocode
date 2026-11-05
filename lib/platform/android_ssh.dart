@@ -6,9 +6,13 @@ import 'package:path/path.dart' as p;
 
 import 'data_dir.dart';
 
-/// Prepares and returns the path to the bundled OpenSSH binary on Android.
+/// Prepares and returns the path to the bundled OpenSSH binary on Android,
+/// and ensures the remote server configuration is ready.
 Future<String?> ensureAndroidSsh() async {
   if (kIsWeb || !Platform.isAndroid) return null;
+
+  // Ensure remote server config (VERSION, servers.json) is ready
+  await ensureAndroidRemoteServer();
 
   // 1. Check if the native library extracted by Android OS exists and is ready.
   for (final nativeLib in const [
@@ -65,3 +69,24 @@ Future<String?> ensureAndroidSsh() async {
   return null;
 }
 
+/// Ensures that remote server configuration (VERSION and servers.json)
+/// is extracted to DataDirectory on Android.
+Future<void> ensureAndroidRemoteServer() async {
+  if (kIsWeb || !Platform.isAndroid) return;
+  final remoteDir = p.join(DataDirectory.current.path, 'remote');
+  final versionFile = File(p.join(remoteDir, 'VERSION'));
+  final serversFile = File(p.join(remoteDir, 'servers.json'));
+
+  try {
+    if (!versionFile.existsSync() || !serversFile.existsSync()) {
+      await Directory(remoteDir).create(recursive: true);
+      final versionData = await rootBundle.loadString('assets/remote/VERSION');
+      await versionFile.writeAsString(versionData.trim());
+
+      final serversData = await rootBundle.loadString('assets/remote/servers.json');
+      await serversFile.writeAsString(serversData.trim());
+    }
+  } catch (error) {
+    debugPrint('Failed to extract Android remote server config: $error');
+  }
+}

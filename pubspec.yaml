@@ -131,6 +131,7 @@ flutter:
     - assets/emoji/
     - assets/network/
     - assets/android/bin/arm64-v8a/
+    - assets/remote/
     # VS Code TextMate grammars and color themes (tool/generate_textmate_assets.mjs).
 
   # VS Code's icon font (tool/generate_codicons.mjs; lib/theme/codicons.dart).

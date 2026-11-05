@@ -523,6 +523,7 @@ class SshHosts extends ChangeNotifier {
 
   /// The app's build of the server; in development, one of the sources.
   static Future<RemoteServerBinaries> _serverBinaries() async {
+    if (Platform.isAndroid) await ensureAndroidRemoteServer();
     final binaries =
         bundledServerBinaries() ?? await SourceServerBinaries.find();
     if (binaries == null) {
