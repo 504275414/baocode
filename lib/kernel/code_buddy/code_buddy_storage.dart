@@ -21,6 +21,16 @@ class CodeBuddyStorage implements SessionCatalog {
     return p.join(DataDirectory.current.path, 'codebuddy');
   }
 
+  /// Normalizes a project working directory path, ensuring Windows drive letters
+  /// are uppercase (e.g. `D:\...`) to match BaoCode workspace project paths.
+  static String normalizeCwd(String cwd) {
+    var normalized = p.normalize(cwd);
+    if (Platform.isWindows && normalized.length >= 2 && normalized[1] == ':') {
+      normalized = '${normalized[0].toUpperCase()}${normalized.substring(1)}';
+    }
+    return normalized;
+  }
+
   /// Ensures the isolated configuration directory exists and syncs authentication
   /// and model settings from the user's global `~/.codebuddy` directory.
   static void ensureIsolatedConfigDir([String? targetDir]) {
@@ -120,14 +130,14 @@ class CodeBuddyStorage implements SessionCatalog {
       for (final file in jsonlFiles) {
         final record = _parseSessionFile(file, fallbackCwd: fallbackCwd);
         if (record == null) continue;
-        (projectMap[record.cwd] ??= []).add(record);
+        (projectMap[normalizeCwd(record.cwd)] ??= []).add(record);
       }
     }
 
     final result = <ProjectRecord>[];
     for (final MapEntry(key: cwd, value: sessions) in projectMap.entries) {
       sessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      result.add(ProjectRecord(path: cwd, sessions: sessions));
+      result.add(ProjectRecord(path: normalizeCwd(cwd), sessions: sessions));
     }
 
     result.sort((a, b) {
@@ -145,9 +155,9 @@ class CodeBuddyStorage implements SessionCatalog {
   @override
   Future<List<SessionRecord>> sessionsIn(String cwd) async {
     final allProjects = await projects();
-    final normalized = p.normalize(cwd);
+    final normalized = normalizeCwd(cwd);
     for (final project in allProjects) {
-      if (p.equals(p.normalize(project.path), normalized)) {
+      if (p.equals(normalizeCwd(project.path), normalized)) {
         return project.sessions;
       }
     }
@@ -235,7 +245,7 @@ class CodeBuddyStorage implements SessionCatalog {
       id: into,
       title: title ?? 'Fork of $id',
       updatedAt: DateTime.now(),
-      cwd: cwd ?? Directory.current.path,
+      cwd: normalizeCwd(cwd ?? Directory.current.path),
       path: targetFile.path,
     );
   }
@@ -248,7 +258,7 @@ class CodeBuddyStorage implements SessionCatalog {
         final json = jsonDecode(line);
         if (json is Map && json['cwd'] is String) {
           final cwd = json['cwd'] as String;
-          if (cwd.isNotEmpty) return cwd;
+          if (cwd.isNotEmpty) return normalizeCwd(cwd);
         }
       }
     } catch (_) {}
@@ -261,7 +271,7 @@ class CodeBuddyStorage implements SessionCatalog {
       if (stat.type == FileSystemEntityType.notFound) return null;
 
       final id = p.basenameWithoutExtension(file.path);
-      String? cwd = fallbackCwd;
+      String? cwd = fallbackCwd != null ? normalizeCwd(fallbackCwd) : null;
       String? aiTitle;
       String? summary;
       String? firstUserMessage;
@@ -278,7 +288,7 @@ class CodeBuddyStorage implements SessionCatalog {
           final json = jsonDecode(trimmed) as Map<String, Object?>;
 
           if (json['cwd'] is String && (json['cwd'] as String).isNotEmpty) {
-            cwd = json['cwd'] as String;
+            cwd = normalizeCwd(json['cwd'] as String);
           }
 
           if (json['timestamp'] case final int ts) {

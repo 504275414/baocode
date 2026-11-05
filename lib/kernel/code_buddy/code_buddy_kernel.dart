@@ -108,6 +108,7 @@ class CodeBuddyKernel
   /// Currently active turn
   String? _turn;
   DateTime? _turnStarted;
+  DateTime? _modelCompletedAt;
   final Set<String> _sentTurns = {};
 
   /// Queued turns waiting to execute once the active turn ends
@@ -316,6 +317,7 @@ class CodeBuddyKernel
       } else if (workingDir.trim().isEmpty || !Directory(workingDir).existsSync()) {
         workingDir = Directory.current.path;
       }
+      workingDir = CodeBuddyStorage.normalizeCwd(workingDir);
 
       final transport = await _startTransport(cwd: workingDir);
       _transport = transport;
@@ -573,6 +575,7 @@ class CodeBuddyKernel
     _turn = turn.id;
     _turnPromptInFlight = false;
     _turnStarted = DateTime.now();
+    _modelCompletedAt = null;
 
     emit(TurnStarted(nextSeq, turn.id));
     emit(
@@ -1182,6 +1185,16 @@ class CodeBuddyKernel
       }
       emit(KernelInfoChanged(nextSeq));
     }
+
+    final phase = (meta?['codebuddy.ai/agentPhase'] as Map?)?['phase'] as String?;
+    if (phase == 'idle') {
+      _modelCompletedAt ??= DateTime.now();
+      _closeThoughtIfOpen();
+      _closeMessageIfOpen();
+      if (_turn case final activeTurn?) {
+        _endTurn(activeTurn, interrupted: false);
+      }
+    }
   }
 
   void _handleUserMessageChunk(Map<String, Object?> update) {
@@ -1590,13 +1603,16 @@ class CodeBuddyKernel
     }
     _approvals.clear();
 
+    final finishTime = _modelCompletedAt ?? DateTime.now();
+    _modelCompletedAt = null;
+
     emit(
       TurnEnded(
         nextSeq,
         turn,
         interrupted: interrupted,
         worked: switch (_turnStarted) {
-          final started? => DateTime.now().difference(started),
+          final started? => finishTime.difference(started),
           null => null,
         },
       ),
