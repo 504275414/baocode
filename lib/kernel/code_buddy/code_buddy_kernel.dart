@@ -304,26 +304,31 @@ class CodeBuddyKernel
       await _ensureMcpServer(workingDir);
       final mcpPort = _mcpPort;
 
+      final mcpServersList = [
+        if (mcpPort != null)
+          {
+            'name': 'baocode',
+            'type': 'http',
+            'url': 'http://127.0.0.1:$mcpPort/mcp',
+            'headers': <Object>[],
+          },
+      ];
+      final normalizedCwd = workingDir.replaceAll(r'\', '/');
+
       final Map<String, Object?> sessionResult;
       final resumeId = context.resume?.id;
       if (resumeId != null && resumeId.isNotEmpty) {
         final loadRes = await _request('session/load', {
           'sessionId': resumeId,
+          'cwd': normalizedCwd,
+          'mcpServers': mcpServersList,
         });
         sessionResult = loadRes is Map ? loadRes.cast<String, Object?>() : const {};
         _sessionId = resumeId;
       } else {
         final newRes = await _request('session/new', {
-          'cwd': workingDir.replaceAll(r'\', '/'),
-          'mcpServers': [
-            if (mcpPort != null)
-              {
-                'name': 'baocode',
-                'type': 'http',
-                'url': 'http://127.0.0.1:$mcpPort/mcp',
-                'headers': <Object>[],
-              },
-          ],
+          'cwd': normalizedCwd,
+          'mcpServers': mcpServersList,
         });
         sessionResult = newRes is Map ? newRes.cast<String, Object?>() : const {};
         if (sessionResult['sessionId'] case final String sid) {
