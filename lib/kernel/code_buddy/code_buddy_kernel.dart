@@ -13,6 +13,7 @@ import 'code_buddy_transport.dart';
 import '../../browser/browser_bridge.dart';
 import '../../browser/browser_tools.dart';
 import '../claude_code/claude_sdk_tools.dart';
+import '../../remote/remote_location.dart';
 
 /// Adapts `codebuddy --acp` to [AgentKernel] using the Agent Client Protocol.
 class CodeBuddyKernel
@@ -277,8 +278,10 @@ class CodeBuddyKernel
 
   Future<void> _connect() async {
     try {
-      String workingDir = context.cwd ?? '';
-      if (workingDir.trim().isEmpty || !Directory(workingDir).existsSync()) {
+      String workingDir = context.cwd ?? context.resume?.cwd ?? '';
+      if (RemoteLocation.isRemote(workingDir)) {
+        workingDir = RemoteLocation.pathOf(workingDir);
+      } else if (workingDir.trim().isEmpty || !Directory(workingDir).existsSync()) {
         workingDir = Directory.current.path;
       }
 
@@ -301,21 +304,34 @@ class CodeBuddyKernel
       await _ensureMcpServer(workingDir);
       final mcpPort = _mcpPort;
 
-      final sessionResult = await _request('session/new', {
-        'cwd': workingDir.replaceAll(r'\', '/'),
-        'mcpServers': [
-          if (mcpPort != null)
-            {
-              'name': 'baocode',
-              'type': 'http',
-              'url': 'http://127.0.0.1:$mcpPort/mcp',
-              'headers': <Object>[],
-            },
-        ],
-      });
+      final Map<String, Object?> sessionResult;
+      final resumeId = context.resume?.id;
+      if (resumeId != null && resumeId.isNotEmpty) {
+        final loadRes = await _request('session/load', {
+          'sessionId': resumeId,
+        });
+        sessionResult = loadRes is Map ? loadRes.cast<String, Object?>() : const {};
+        _sessionId = resumeId;
+      } else {
+        final newRes = await _request('session/new', {
+          'cwd': workingDir.replaceAll(r'\', '/'),
+          'mcpServers': [
+            if (mcpPort != null)
+              {
+                'name': 'baocode',
+                'type': 'http',
+                'url': 'http://127.0.0.1:$mcpPort/mcp',
+                'headers': <Object>[],
+              },
+          ],
+        });
+        sessionResult = newRes is Map ? newRes.cast<String, Object?>() : const {};
+        if (sessionResult['sessionId'] case final String sid) {
+          _sessionId = sid;
+        }
+      }
 
-      if (sessionResult['sessionId'] case final String sid) {
-        _sessionId = sid;
+      if (_sessionId case final String sid) {
         if (_pendingModel case final targetModel?) {
           unawaited(_request('session/set_model', {'sessionId': sid, 'modelId': targetModel}));
         }

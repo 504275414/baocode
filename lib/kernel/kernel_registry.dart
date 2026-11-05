@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'agent_kernel.dart';
 import 'claude_code/claude_code_kernel.dart';
 import 'code_buddy/code_buddy_kernel.dart';
+import 'code_buddy/code_buddy_storage.dart';
 import '../remote/remote_claude.dart';
 
 /// The kernels the user can pick from. Another kernel is an adapter and a
@@ -14,6 +15,7 @@ abstract final class KernelRegistry {
     icon: Icons.smart_toy_rounded,
     description: 'CodeBuddy AI coding assistant',
     create: (context) => CodeBuddyKernel(codeBuddy, context),
+    catalog: const CodeBuddyStorage(),
   );
 
   static final KernelDescriptor claudeCode = KernelDescriptor(
