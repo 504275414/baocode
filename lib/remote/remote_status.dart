@@ -284,7 +284,7 @@ class SshHostBanner extends StatelessWidget {
     switch (error) {
       SshConnectException(:final failure, :final message, :final detail) => (
         switch (failure) {
-          SshFailure.noSsh => l10n.remoteFailNoSsh,
+          SshFailure.noSsh => detail != null && detail.isNotEmpty ? '${l10n.remoteFailNoSsh}\n($detail)' : l10n.remoteFailNoSsh,
           SshFailure.authentication
               when message == SshLauncher.cancelledMessage =>
             l10n.remoteFailCancelled,

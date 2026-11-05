@@ -6,15 +6,48 @@ import 'package:path/path.dart' as p;
 
 import 'data_dir.dart';
 
+const _platformChannel = MethodChannel('dev.baocode.baocode/platform');
+
+/// Gets the Android system's native library directory (e.g. /data/app/.../lib/arm64)
+Future<String?> getAndroidNativeLibraryDir() async {
+  if (kIsWeb || !Platform.isAndroid) return null;
+  try {
+    return await _platformChannel.invokeMethod<String>('getNativeLibraryDir');
+  } catch (error) {
+    debugPrint('[Android SSH] getNativeLibraryDir error: $error');
+    return null;
+  }
+}
+
 /// Prepares and returns the path to the bundled OpenSSH binary on Android,
 /// and ensures the remote server configuration is ready.
 Future<String?> ensureAndroidSsh() async {
   if (kIsWeb || !Platform.isAndroid) return null;
 
-  // Ensure remote server config (VERSION, servers.json) is ready
+  // 1. Ensure remote server config (VERSION, servers.json) is ready
   await ensureAndroidRemoteServer();
 
-  // 1. Check if the native library extracted by Android OS exists and is ready.
+  // 2. Ensure application home / .ssh directory exists for OpenSSH known_hosts
+  try {
+    final sshConfigDir = Directory(p.join(DataDirectory.current.path, '.ssh'));
+    if (!sshConfigDir.existsSync()) {
+      await sshConfigDir.create(recursive: true);
+    }
+  } catch (e) {
+    debugPrint('[Android SSH] Failed to create .ssh directory: $e');
+  }
+
+  // 3. Check native library directory provided by Android applicationInfo
+  final nativeDir = await getAndroidNativeLibraryDir();
+  if (nativeDir != null && nativeDir.isNotEmpty) {
+    final nativeSsh = p.join(nativeDir, 'libssh.so');
+    if (File(nativeSsh).existsSync()) {
+      debugPrint('[Android SSH] Found native libssh.so at: $nativeSsh');
+      return nativeSsh;
+    }
+  }
+
+  // 4. Check known fallback native paths
   for (final nativeLib in const [
     '/data/data/dev.baocode.baocode/lib/libssh.so',
     '/data/user/0/dev.baocode.baocode/lib/libssh.so',
@@ -24,7 +57,7 @@ Future<String?> ensureAndroidSsh() async {
     }
   }
 
-  // 2. Otherwise extract bundled binaries from Flutter assets to files/bin/
+  // 5. Otherwise extract bundled binaries from Flutter assets to files/bin/
   final binDir = p.join(DataDirectory.current.path, 'bin');
   final sshFile = File(p.join(binDir, 'ssh'));
   final keygenFile = File(p.join(binDir, 'ssh-keygen'));
@@ -63,7 +96,7 @@ Future<String?> ensureAndroidSsh() async {
       return sshFile.path;
     }
   } catch (error) {
-    debugPrint('Failed to extract bundled Android ssh: $error');
+    debugPrint('[Android SSH] Failed to extract bundled ssh: $error');
   }
 
   return null;
@@ -87,6 +120,6 @@ Future<void> ensureAndroidRemoteServer() async {
       await serversFile.writeAsString(serversData.trim());
     }
   } catch (error) {
-    debugPrint('Failed to extract Android remote server config: $error');
+    debugPrint('[Android SSH] Failed to extract Android remote server config: $error');
   }
 }

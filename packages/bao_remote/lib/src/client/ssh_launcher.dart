@@ -480,8 +480,25 @@ class SshLauncher {
     this.maxBackoff = const Duration(seconds: 10),
     this.heartbeat = const Duration(seconds: 5),
     this.silence = const Duration(seconds: 30),
-  }) : _start = start ?? Process.start,
+  }) : _start = start ?? _defaultStart,
        _askpass = askpass ?? SshAskpass();
+
+  static Future<Process> _defaultStart(
+    String executable,
+    List<String> arguments, {
+    Map<String, String>? environment,
+  }) {
+    if (Platform.isAndroid) {
+      final env = {
+        'HOME': Platform.environment['HOME'] ??
+            '/data/data/dev.baocode.baocode/files',
+        'TMPDIR': '/data/data/dev.baocode.baocode/files/tmp',
+        ...?environment,
+      };
+      return Process.start(executable, arguments, environment: env);
+    }
+    return Process.start(executable, arguments, environment: environment);
+  }
 
   /// The `ssh` executable.
   final String ssh;
