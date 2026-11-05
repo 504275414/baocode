@@ -27,11 +27,13 @@ class CodeBuddyKernel
         ProvidesCommands,
         ReportsContext,
         AcceptsImages,
-        QueuesMessages {
+        QueuesMessages,
+        RenamesSession,
+        ForksConversation {
   CodeBuddyKernel(
     this.descriptor,
     this.context, {
-    Future<CodeBuddyTransport> Function({String? cwd})? startTransport,
+    Future<CodeBuddyTransport> Function({String? cwd, String? configDir})? startTransport,
   }) : _startTransport = startTransport ?? ProcessCodeBuddyTransport.start {
     final initialModel = context.settings[KernelChoiceKind.model.name];
     final initialMode = context.settings[KernelChoiceKind.mode.name];
@@ -124,6 +126,35 @@ class CodeBuddyKernel
 
   String? _currentMessageId;
   StringBuffer? _messageBuffer;
+
+  String? _replayingTurnId;
+
+  static final _random = math.Random.secure();
+
+  static String _newSessionId() {
+    String hex(int length) =>
+        [for (var i = 0; i < length; i++) _random.nextInt(16).toRadixString(16)]
+            .join();
+    final variant = (8 + _random.nextInt(4)).toRadixString(16);
+    return '${hex(8)}-${hex(4)}-4${hex(3)}-$variant${hex(3)}-${hex(12)}';
+  }
+
+  @override
+  bool get canFork => _sessionId != null;
+
+  @override
+  Future<SessionRecord?> fork({String? before, required String title}) async {
+    final sid = _sessionId;
+    if (sid == null) return null;
+    final into = _newSessionId();
+    const storage = CodeBuddyStorage();
+    return storage.fork(sid, into, before: before, title: title);
+  }
+
+  @override
+  void rename(String title) {
+    // BaoCode Workspace manages title persistence locally.
+  }
 
   /// Running tool calls awaiting completion: callId -> ToolCallItem
   final Map<String, ToolCallItem> _runningTools = {};
@@ -324,14 +355,19 @@ class CodeBuddyKernel
           'cwd': normalizedCwd,
           'mcpServers': mcpServersList,
         });
-        sessionResult = loadRes is Map ? loadRes.cast<String, Object?>() : const {};
+        sessionResult = loadRes;
         _sessionId = resumeId;
-      } else {
+        _closeThoughtIfOpen();
+        _closeMessageIfOpen();
+        if (_replayingTurnId case final turnId?) {
+          emit(TurnEnded(nextSeq, turnId, interrupted: false));
+          _replayingTurnId = null;
+        }      } else {
         final newRes = await _request('session/new', {
           'cwd': normalizedCwd,
           'mcpServers': mcpServersList,
         });
-        sessionResult = newRes is Map ? newRes.cast<String, Object?>() : const {};
+        sessionResult = newRes;
         if (sessionResult['sessionId'] case final String sid) {
           _sessionId = sid;
         }
@@ -1101,6 +1137,10 @@ class CodeBuddyKernel
   void _handleSessionUpdate(Map<String, Object?> update) {
     final type = update['sessionUpdate'] as String?;
     switch (type) {
+      case 'session_info_update':
+        _handleSessionInfoUpdate(update);
+      case 'user_message_chunk':
+        _handleUserMessageChunk(update);
       case 'config_option_update':
         _handleConfigOptions(update);
       case 'model_update':
@@ -1133,16 +1173,13 @@ class CodeBuddyKernel
   void _handleSessionInfoUpdate(Map<String, Object?> update) {
     final meta = update['_meta'] as Map?;
     final replay = meta?['codebuddy.ai/historyReplay'] as String?;
-    if (replay == 'start') {
-      _replayingHistory = true;
-    } else if (replay == 'end') {
+    if (replay == 'end') {
       _closeThoughtIfOpen();
       _closeMessageIfOpen();
-      if (_replayingTurnId != null) {
-        emit(TurnEnded(nextSeq, _replayingTurnId!, interrupted: false));
+      if (_replayingTurnId case final turnId?) {
+        emit(TurnEnded(nextSeq, turnId, interrupted: false));
         _replayingTurnId = null;
       }
-      _replayingHistory = false;
       emit(KernelInfoChanged(nextSeq));
     }
   }
@@ -1151,8 +1188,8 @@ class CodeBuddyKernel
     _closeThoughtIfOpen();
     _closeMessageIfOpen();
 
-    if (_replayingTurnId != null) {
-      emit(TurnEnded(nextSeq, _replayingTurnId!, interrupted: false));
+    if (_replayingTurnId case final turnId?) {
+      emit(TurnEnded(nextSeq, turnId, interrupted: false));
       _replayingTurnId = null;
     }
 
@@ -1161,7 +1198,7 @@ class CodeBuddyKernel
         'turn_${DateTime.now().millisecondsSinceEpoch}';
 
     String text = '';
-    final images = <ChatImage>[];
+
 
     final content = update['content'];
     if (content is Map) {
@@ -1186,7 +1223,7 @@ class CodeBuddyKernel
         messageId,
         UserMessageItem(
           text: text,
-          images: images,
+
           queued: false,
         ),
       ),
