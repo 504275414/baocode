@@ -1,0 +1,74 @@
+name: Build Remote Server (Linux)
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_version:
+        description: '自定义指定版本号（留空则默认按源码自动计算）'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - 'packages/bao_remote/**'
+      - 'packages/bao_agent/**'
+      - 'tool/build_remote_server.dart'
+      - '.github/workflows/build-remote-server.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-remote:
+    name: Build Linux Remote Servers (ARM64 & x64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter & Dart
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+
+      - name: Restore bao_iroh prebuilt
+        id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+        continue-on-error: true
+
+      - name: Setup Rust (fallback if prebuilt missed)
+        if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+        continue-on-error: true
+
+      - name: Compile Remote Servers
+        shell: bash
+        run: |
+          mkdir -p build/remote
+
+          # 编译 linux-arm64 和 linux-x64 两套二进制
+          dart run tool/build_remote_server.dart --out build/remote --only linux-arm64,linux-x64
+
+          # 如果用户在手动触发时指定了版本号，覆盖写进 VERSION 文件，确保与 PC 客户端对齐
+          if [ -n "${{ github.event.inputs.server_version }}" ]; then
+            echo "${{ github.event.inputs.server_version }}" > build/remote/VERSION
+            echo "Using specified server version: ${{ github.event.inputs.server_version }}"
+          else
+            echo "Generated server version: $(cat build/remote/VERSION)"
+          fi
+
+      - name: Upload Remote Server Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: baocode-remote-server-linux
+          path: |
+            build/remote/baocode-server-linux-arm64
+            build/remote/baocode-server-linux-x64
+            build/remote/VERSION
+            build/remote/servers.json
+            build/remote/*.gz
+          if-no-files-found: error
+
