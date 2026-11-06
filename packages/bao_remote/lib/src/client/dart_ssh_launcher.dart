@@ -52,6 +52,7 @@ class DartSshLauncher extends SshLauncher {
         client,
         'sh -s',
         stdin: utf8.encode(probeScript),
+        timeout: const Duration(seconds: 20),
       );
       print(
         '[DartSSH] Probe output: exit=${probe.exitCode}, stdout=${probe.stdout.trim()}',
@@ -72,6 +73,7 @@ class DartSshLauncher extends SshLauncher {
         final windows = await _run(
           client,
           SshLauncher.powershellCommand(windowsProbeScript),
+          timeout: const Duration(seconds: 20),
         );
         final windowsLines = const LineSplitter().convert(windows.stdout);
         if (partsOf(windowsLines) case final found when found.length >= 3) {
@@ -209,16 +211,30 @@ class DartSshLauncher extends SshLauncher {
     final peer = RpcPeer(keeper.channel.messages, keeper.channel.send);
     final remoteClient = RemoteClient(peer);
     try {
-      await remoteClient.initialize().timeout(
-        const Duration(seconds: 30),
-      );
+      final sessionExit = keeper.initialSessionDone?.then((_) {
+        final code = keeper.initialSessionExitCode;
+        final stderrText = keeper.stderr.join('\n').trim();
+        throw SshConnectException(
+          SshFailure.server,
+          'The server on ${target.name} stopped unexpectedly (exit code $code)',
+          detail: stderrText.isNotEmpty ? stderrText : null,
+        );
+      });
+
+      await Future.any([
+        remoteClient.initialize(),
+        ?sessionExit,
+      ]).timeout(const Duration(seconds: 30));
       print('[DartSSH] RPC client initialized successfully');
     } catch (error) {
       await keeper.close();
       print('[DartSSH] Failed to initialize RPC client: $error');
+      if (error is SshConnectException) rethrow;
+      final stderrText = keeper.stderr.join('\n').trim();
       throw SshConnectException(
         SshFailure.server,
         'The server on ${target.name} did not initialize: $error',
+        detail: stderrText.isNotEmpty ? stderrText : null,
       );
     }
     return SshConnection(target, remoteClient, keeper);
@@ -471,10 +487,11 @@ class DartSshLauncher extends SshLauncher {
     await session.stdin.close();
 
     try {
-      await Future.wait([stdoutDone.future, stderrDone.future]).timeout(
-        timeout,
-      );
-      await session.done.timeout(const Duration(seconds: 5));
+      await Future.any([
+        Future.wait([stdoutDone.future, stderrDone.future]),
+        session.done
+            .then((_) => Future.delayed(const Duration(milliseconds: 100))),
+      ]).timeout(timeout);
     } on TimeoutException {
       session.channel.close();
       throw TimeoutException('Command timed out ($command)');
@@ -543,6 +560,9 @@ class _DartSshSessionKeeper implements SessionKeeper {
   SSHClient _client;
   SSHSession? _session;
   SSHForwardChannel? _forward;
+
+  Future<void>? get initialSessionDone => _session?.done;
+  int? get initialSessionExitCode => _session?.exitCode;
 
   Timer? _retry;
   @override
@@ -633,8 +653,14 @@ class _DartSshSessionKeeper implements SessionKeeper {
       }
       _attachCurrent();
     } on SshConnectException catch (error) {
+      try {
+        _client.close();
+      } catch (_) {}
       _failed(error);
     } catch (error) {
+      try {
+        _client.close();
+      } catch (_) {}
       _failed(
         SshConnectException(
           SshFailure.unreachable,

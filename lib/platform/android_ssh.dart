@@ -111,15 +111,26 @@ Future<void> ensureAndroidRemoteServer() async {
   final serversFile = File(p.join(remoteDir, 'servers.json'));
 
   try {
-    if (!versionFile.existsSync() || !serversFile.existsSync()) {
-      await Directory(remoteDir).create(recursive: true);
-      final versionData = await rootBundle.loadString('assets/remote/VERSION');
-      await versionFile.writeAsString(versionData.trim());
+    final versionData =
+        (await rootBundle.loadString('assets/remote/VERSION')).trim();
+    final serversData =
+        (await rootBundle.loadString('assets/remote/servers.json')).trim();
 
-      final serversData = await rootBundle.loadString('assets/remote/servers.json');
-      await serversFile.writeAsString(serversData.trim());
+    final currentVersion = versionFile.existsSync()
+        ? (await versionFile.readAsString()).trim()
+        : null;
+
+    if (currentVersion != versionData || !serversFile.existsSync()) {
+      await Directory(remoteDir).create(recursive: true);
+      await versionFile.writeAsString(versionData);
+      await serversFile.writeAsString(serversData);
+      // ignore: avoid_print
+      print(
+        '[Android SSH] Synchronized remote server config for Android (version: $versionData)',
+      );
     }
   } catch (error) {
-    debugPrint('[Android SSH] Failed to extract Android remote server config: $error');
+    // ignore: avoid_print
+    print('[Android SSH] Failed to extract Android remote server config: $error');
   }
 }
