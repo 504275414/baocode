@@ -147,7 +147,7 @@ void main() {
     final kernel = CodeBuddyKernel(
       KernelRegistry.codeBuddy,
       const KernelContext(cwd: '/test/workspace'),
-      startTransport: ({cwd}) async => mockTransport,
+      startTransport: ({cwd, configDir}) async => mockTransport,
     );
 
     final events = <KernelEvent>[];
@@ -180,7 +180,7 @@ void main() {
     final kernel = CodeBuddyKernel(
       KernelRegistry.codeBuddy,
       const KernelContext(cwd: '/test/workspace'),
-      startTransport: ({cwd}) async => mockTransport,
+      startTransport: ({cwd, configDir}) async => mockTransport,
     );
 
     final events = <KernelEvent>[];
@@ -244,7 +244,7 @@ void main() {
     final kernel = CodeBuddyKernel(
       KernelRegistry.codeBuddy,
       const KernelContext(),
-      startTransport: ({cwd}) async => mockTransport,
+      startTransport: ({cwd, configDir}) async => mockTransport,
     );
 
     expect(kernel, isA<QueuesMessages>());
