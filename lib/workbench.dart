@@ -104,6 +104,7 @@ import 'settings/data_dir_startup.dart';
 import 'settings/jsonc_file.dart';
 import 'settings/pages/diagnostics_dialog.dart';
 import 'settings/pages/models_page.dart';
+import 'settings/pages/ssh_page.dart';
 import 'settings/pages/upstream_import_dialog.dart';
 import 'settings/settings_dialog.dart';
 import 'settings/shell_command_actions.dart';
@@ -998,7 +999,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       if (_workspace.sidebarProjects.isNotEmpty)
         ChatCommandIds.newChat: _newAgent
       else if (WindowControls.canPickDirectory)
-        ChatCommandIds.newChat: () => unawaited(_openFolder()),
+        ChatCommandIds.newChat: () => unawaited(_openFolder())
+      else
+        ChatCommandIds.newChat: () => _openRemoteProject(),
       if (current != null && panes.length > 1)
         ChatCommandIds.closePane: () => _workspace.closePane(current),
       if (agents.isNotEmpty) ...{
@@ -2693,9 +2696,16 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       await showSettingsDialog(
         context,
         section: section,
-        pageBuilder: (context, section) =>
-            widget.settings?.buildPage(context, section) ??
-            const SizedBox.shrink(),
+        pageBuilder: (context, section) {
+          if (section == SettingsSection.ssh) {
+            return SshSettingsPage(
+              workspace: _workspace,
+              onOpenFolder: (host) => _openRemoteProject(host: host),
+            );
+          }
+          return widget.settings?.buildPage(context, section) ??
+              const SizedBox.shrink();
+        },
         noticeBuilder: widget.settings?.buildNotice,
       );
     } finally {
@@ -3205,12 +3215,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         onOpened?.call();
       },
       onOpenFolder: WindowControls.canPickDirectory ? _openFolder : null,
-      onAddSshHost: WindowControls.canPickDirectory
-          ? () => _openRemoteProject(switchTo: true)
-          : null,
-      onOpenFolderOn: WindowControls.canPickDirectory
-          ? (host) => _openRemoteProject(host: host)
-          : null,
+      onAddSshHost: () => _openRemoteProject(switchTo: true),
+      onOpenFolderOn: (host) => _openRemoteProject(host: host),
       editSshHost: (host) => _sshConfigHosts.contains(host)
           ? null
           : () => unawaited(_editSshServer(host: host)),
@@ -4765,9 +4771,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         leading: leading,
         titleBarInset: titleBarInset,
         onOpenFolder: WindowControls.canPickDirectory ? _openFolder : null,
-        onOpenRemote: WindowControls.canPickDirectory
-            ? _openRemoteProject
-            : null,
+        onOpenRemote: _openRemoteProject,
       );
     }
     // A pane among others: the window has one row over them all, with the
@@ -5534,9 +5538,10 @@ class _EmptyWorkspace extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final hasOpen = onOpenFolder != null || onOpenRemote != null;
     final (title, detail) = loading
         ? (l10n.workspaceLoadingProjects, '')
-        : onOpenFolder == null
+        : !hasOpen
         ? (l10n.workspaceDesktopOnly, l10n.workspaceDesktopOnlyDetail)
         : (
             l10n.workspaceOpenProjectFolder,
@@ -5591,24 +5596,27 @@ class _EmptyWorkspace extends StatelessWidget {
                         ),
                       ),
                     ],
-                    if (onOpenFolder case final open? when !loading) ...[
-                      const SizedBox(height: 16),
-                      // As wide as its label: a centred column would stretch it.
-                      IntrinsicWidth(
-                        child: PanelButton(
-                          label: l10n.sidebarOpenFolder,
-                          primary: true,
-                          onTap: open,
+                    if (!loading) ...[
+                      if (onOpenFolder case final open?) ...[
+                        const SizedBox(height: 16),
+                        // As wide as its label: a centred column would stretch it.
+                        IntrinsicWidth(
+                          child: PanelButton(
+                            label: l10n.sidebarOpenFolder,
+                            primary: onOpenRemote == null,
+                            onTap: open,
+                          ),
                         ),
-                      ),
+                      ],
                       if (onOpenRemote case final remote?) ...[
-                        const SizedBox(height: 8),
+                        SizedBox(height: onOpenFolder != null ? 8 : 16),
                         IntrinsicWidth(
                           child: PanelButton(
                             label: l10n.cmdOpenRemoteFolder.replaceFirst(
                               RegExp(r'(\.\.\.|…)$'),
                               '',
                             ),
+                            primary: true,
                             onTap: remote,
                           ),
                         ),

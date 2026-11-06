@@ -65,6 +65,7 @@ class AppSettings {
     this.claudeStatus,
     this.link,
     this.customizations,
+    this.onOpenRemoteFolder,
   }) : keybindings = keybindings ?? KeybindingService.instance;
 
   final AppLocale locale;
@@ -104,6 +105,9 @@ class AppSettings {
   /// Claude Code's customizations, for Settings → Customize; none where
   /// there are no files (the web), the page made over the default store.
   final CustomizationStore? customizations;
+
+  /// Opens a project folder on a remote host.
+  final ValueChanged<String>? onOpenRemoteFolder;
 
   /// The feature tips (the setup checklist, the update's and the scenarios'
   /// notifications); none without settings files.
@@ -172,7 +176,10 @@ class AppSettings {
       case SettingsSection.network:
         return NetworkSettingsPage(settings: files?.settings);
       case SettingsSection.ssh:
-        return SshSettingsPage(workspace: workspace);
+        return SshSettingsPage(
+          workspace: workspace,
+          onOpenFolder: onOpenRemoteFolder,
+        );
       case SettingsSection.mobile:
         return switch (link) {
           final link? => MobileSettingsPage(host: link),

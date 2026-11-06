@@ -4,7 +4,8 @@ import 'dart:ui' show AppExitResponse, AppExitType;
 
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show ServicesBinding;
+import 'package:flutter/services.dart'
+    show ServicesBinding, SystemChrome, SystemUiMode, SystemUiOverlayStyle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
 import 'package:bao_editor/textmate/textmate_syntax.dart';
@@ -168,6 +169,15 @@ Future<void> main(List<String> arguments) async {
   unawaited(reapLspProcesses());
   unawaited(reapPtyProcesses());
   WidgetsFlutterBinding.ensureInitialized();
+  if (AppPlatform.isAndroid) {
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky));
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+      ),
+    );
+  }
   MemoryBudget.apply();
   if (!kIsWeb) {
     AppEventWatch.start();
@@ -991,7 +1001,18 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
           ),
           child: MediaQuery(
             data: media.copyWith(textScaler: snapped(system)),
-            child: UiZoom(scale: zoom, child: scaled),
+            child: UiZoom(
+              scale: zoom,
+              child: AppPlatform.isAndroid
+                  ? SafeArea(
+                      top: true,
+                      bottom: false,
+                      left: false,
+                      right: false,
+                      child: scaled!,
+                    )
+                  : scaled,
+            ),
           ),
         );
       },

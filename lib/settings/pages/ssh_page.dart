@@ -13,6 +13,7 @@ import '../../remote/remote_location.dart';
 import '../../remote/remote_status.dart' show sshErrorText;
 import '../../remote/ssh_host.dart';
 import '../../remote/ssh_passwords.dart';
+import '../../theme/codicons.dart';
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../../workspace/ssh_server_edit.dart';
 import '../../workspace/workspace.dart';
@@ -23,7 +24,12 @@ import 'settings_widgets.dart';
 /// disconnected from, and removed; those of `~/.ssh/config` listed as they
 /// are there.
 class SshSettingsPage extends StatefulWidget {
-  const SshSettingsPage({super.key, this.workspace, this.configHosts});
+  const SshSettingsPage({
+    super.key,
+    this.workspace,
+    this.configHosts,
+    this.onOpenFolder,
+  });
 
   /// The window's; none under test.
   final Workspace? workspace;
@@ -31,6 +37,9 @@ class SshSettingsPage extends StatefulWidget {
   /// The hosts of `~/.ssh/config`; [defaultRemoteConfigHosts] when not
   /// given.
   final Future<List<String>> Function()? configHosts;
+
+  /// Opens a project on a connected host.
+  final ValueChanged<String>? onOpenFolder;
 
   @override
   State<SshSettingsPage> createState() => _SshSettingsPageState();
@@ -139,6 +148,12 @@ class _SshSettingsPageState extends State<SshSettingsPage> {
                     onEdit: () => unawaited(_edit(workspace, host: host)),
                     onDisconnect: () => unawaited(_disconnect(workspace, host)),
                     onRemove: () => unawaited(_remove(workspace, host)),
+                    onOpen: widget.onOpenFolder == null
+                        ? null
+                        : () {
+                            Navigator.of(context).maybePop();
+                            widget.onOpenFolder!(host);
+                          },
                   ),
                 SettingsRow(
                   label: servers.isEmpty
@@ -164,6 +179,12 @@ class _SshSettingsPageState extends State<SshSettingsPage> {
                       details: const [],
                       onDisconnect: () =>
                           unawaited(_disconnect(workspace, host)),
+                      onOpen: widget.onOpenFolder == null
+                          ? null
+                          : () {
+                              Navigator.of(context).maybePop();
+                              widget.onOpenFolder!(host);
+                            },
                     ),
                   if (configFile != null && File(configFile).existsSync())
                     SettingsRow(
@@ -224,6 +245,7 @@ class _HostRow extends StatelessWidget {
     required this.onDisconnect,
     this.onEdit,
     this.onRemove,
+    this.onOpen,
   });
 
   final String host;
@@ -232,6 +254,7 @@ class _HostRow extends StatelessWidget {
   final VoidCallback onDisconnect;
   final VoidCallback? onEdit;
   final VoidCallback? onRemove;
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -263,13 +286,22 @@ class _HostRow extends StatelessWidget {
                   secondary: true,
                   onPressed: onEdit,
                 ),
-              if (state == SshHostState.connected)
+              if (state == SshHostState.connected) ...[
+                if (onOpen case final onOpen?)
+                  IdeButton(
+                    label: l10n.sidebarOpenFolderOn(label).replaceFirst(
+                      RegExp(r'(\.\.\.|…)$'),
+                      '',
+                    ),
+                    icon: Codicons.folderOpened,
+                    onPressed: onOpen,
+                  ),
                 IdeButton(
                   label: l10n.sshSettingsDisconnect,
                   secondary: true,
                   onPressed: onDisconnect,
-                )
-              else
+                ),
+              ] else
                 IdeButton(
                   label: l10n.sshSettingsConnect,
                   secondary: true,
