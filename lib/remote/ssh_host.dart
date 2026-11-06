@@ -541,6 +541,14 @@ class SshHosts extends ChangeNotifier {
       SshLauncher(ssh: 'ssh', binaries: await _serverBinaries());
 
   Future<SshLauncher> _makeLauncher() async {
+    if (Platform.isAndroid) {
+      await ensureAndroidRemoteServer();
+      return DartSshLauncher(
+        binaries: await _serverBinaries(),
+        prompter: passwords.answer,
+        savedServers: savedServers,
+      );
+    }
     final String? bundledPath;
     if (Platform.isWindows) {
       bundledPath = p.join(
@@ -548,8 +556,6 @@ class SshHosts extends ChangeNotifier {
         'openssh',
         'ssh.exe',
       );
-    } else if (Platform.isAndroid) {
-      bundledPath = await ensureAndroidSsh();
     } else {
       bundledPath = null;
     }

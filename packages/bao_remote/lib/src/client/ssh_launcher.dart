@@ -160,8 +160,26 @@ typedef SshProcessStarter = Future<Process> Function(
 /// (cut, or silent: see [ResumableChannel]) is made again, again and again
 /// while it cannot be, [linked] false meanwhile; what was asked waits for
 /// it, and what runs there carries on. [done] once the session is gone.
+/// A link keeper maintaining the remote session over a resumable channel.
+abstract class SessionKeeper {
+  ResumableChannel get channel;
+  bool get stalled;
+  DateTime? get retryAt;
+  SshConnectException? get lastError;
+  Stream<void> get changes;
+  Future<void> retryNow();
+  List<String> get stderr;
+  bool get closing;
+  set closing(bool value);
+  Future<void> close();
+}
+
 class SshConnection {
-  SshConnection._(this.target, this.client, _SessionKeeper keeper)
+  SshConnection(this.target, this.client, SessionKeeper keeper)
+    : _keeper = keeper,
+      _ended = keeper.close;
+
+  SshConnection._(this.target, this.client, SessionKeeper keeper)
     : _keeper = keeper,
       _ended = keeper.close;
 
@@ -173,7 +191,7 @@ class SshConnection {
 
   final SshTarget target;
   final RemoteClient client;
-  final _SessionKeeper? _keeper;
+  final SessionKeeper? _keeper;
   final Future<void> Function() _ended;
 
   RemoteHello get hello => client.hello!;
@@ -196,7 +214,7 @@ class SshConnection {
   SshConnectException? get lastError => _keeper?.lastError;
 
   /// Each change of [linked], [stalled] and [retryAt].
-  Stream<void> get changes => _keeper?.changes.stream ?? const Stream.empty();
+  Stream<void> get changes => _keeper?.changes ?? const Stream.empty();
 
   /// Connects again now, while not [linked]; completes once linked, or
   /// fails with why not (the session gone: [RpcClosed]).
@@ -220,7 +238,7 @@ class SshConnection {
 
 /// Keeps a session's link up: `ssh` running the bridge to it, run again
 /// once lost (at once, then after 1, 2, 4… seconds up to [maxBackoff]).
-class _SessionKeeper {
+class _SessionKeeper implements SessionKeeper {
   _SessionKeeper(
     this._launcher,
     this.target,
@@ -251,20 +269,28 @@ class _SessionKeeper {
   /// `ssh -W` rather than a bridge (what a command there reads of its
   /// stdin is not to be relied on).
   final ({int port, String token})? windows;
+  @override
   late final ResumableChannel channel = ResumableChannel(
     heartbeat: _launcher.heartbeat,
     silence: _launcher.silence,
   );
-  final StreamController<void> changes = StreamController.broadcast();
+  final StreamController<void> _changes = StreamController.broadcast();
+  @override
+  Stream<void> get changes => _changes.stream;
 
   /// The last lines `ssh` and the bridge said on stderr.
+  @override
   final List<String> stderr = [];
 
   Process? _process;
   Timer? _retry;
+  @override
   DateTime? retryAt;
+  @override
   SshConnectException? lastError;
+  @override
   bool stalled = false;
+  @override
   bool closing = false;
   int _failures = 0;
   Future<void>? _dialing;
@@ -343,6 +369,7 @@ class _SessionKeeper {
     return controller.stream;
   }
 
+  @override
   Future<void> retryNow() async {
     if (channel.isClosed) throw const RpcClosed();
     if (channel.linked) return;
@@ -432,7 +459,7 @@ class _SessionKeeper {
   }
 
   void _changed() {
-    if (!changes.isClosed) changes.add(null);
+    if (!_changes.isClosed) _changes.add(null);
   }
 
   void _stop() {
@@ -442,6 +469,7 @@ class _SessionKeeper {
     _changed();
   }
 
+  @override
   Future<void> close() async {
     closing = true;
     _stop();
@@ -456,7 +484,7 @@ class _SessionKeeper {
         },
       );
     }
-    await changes.close();
+    await _changes.close();
   }
 }
 
@@ -1275,13 +1303,15 @@ exit 2
     return result;
   }
 
-  static String _nonce([int bytes = 6]) {
+  static String nonce([int bytes = 6]) {
     final random = Random.secure();
     return [
       for (var i = 0; i < bytes; i++)
         random.nextInt(256).toRadixString(16).padLeft(2, '0'),
     ].join();
   }
+
+  static String _nonce([int bytes = 6]) => nonce(bytes);
 
   static String _tail(String text) {
     final lines = const LineSplitter()

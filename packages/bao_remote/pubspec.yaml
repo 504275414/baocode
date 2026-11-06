@@ -17,5 +17,6 @@ dependencies:
   bao_conpty:
     path: ../bao_conpty
   crypto: ^3.0.6
+  dartssh2: ^4.1.0
   meta: ^1.15.0
   path: ^1.9.1
