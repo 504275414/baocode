@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -39,15 +41,20 @@ class DartSshLauncher extends SshLauncher {
   }) async {
     final progress = onProgress ?? (_) {};
     progress('Connecting to ${target.name}');
+    print('[DartSSH] connect requested for ${target.text}');
 
     final client = await dialClient(target, onProgress: onProgress);
 
     try {
       progress('Probing ${target.name}');
+      print('[DartSSH] Probing ${target.name}...');
       final probe = await _run(
         client,
         'sh -s',
         stdin: utf8.encode(probeScript),
+      );
+      print(
+        '[DartSSH] Probe output: exit=${probe.exitCode}, stdout=${probe.stdout.trim()}',
       );
 
       var lines = const LineSplitter().convert(probe.stdout);
@@ -61,6 +68,7 @@ class DartSshLauncher extends SshLauncher {
 
       if (target.wslDistro == null &&
           (parts.length < 3 || SshLauncher.isWindowsSystem(parts[1]))) {
+        print('[DartSSH] Host appears to be Windows, running Windows probe...');
         final windows = await _run(
           client,
           SshLauncher.powershellCommand(windowsProbeScript),
@@ -94,10 +102,12 @@ class DartSshLauncher extends SshLauncher {
           'Only Linux, macOS and Windows hosts on x64 or arm64 are supported, not $system $machine',
         );
       }
+      print('[DartSSH] Detected platform: $platform');
 
       final windows = platform.startsWith('windows-');
       if (!lines.contains('BAOCODE-PRESENT')) {
         progress('Installing the BaoCode server on ${target.name}');
+        print('[DartSSH] Server binary not present, uploading to remote...');
         final binary = await binaries.read(platform);
         if (binary == null) {
           throw SshConnectException(
@@ -114,6 +124,7 @@ class DartSshLauncher extends SshLauncher {
             client,
             uploadCommand(SshLauncher.nonce(), gzip: gzip),
             stdin: gzip ? GZipCodec(level: 6).encode(binary) : binary,
+            timeout: const Duration(minutes: 3),
           );
           if (upload.exitCode != 0) {
             throw SshConnectException(
@@ -123,10 +134,14 @@ class DartSshLauncher extends SshLauncher {
             );
           }
         }
+        print('[DartSSH] Server binary uploaded successfully');
+      } else {
+        print('[DartSSH] Server binary already present on remote host');
       }
 
       progress('Starting the BaoCode server on ${target.name}');
       final sessionId = SshLauncher.nonce(16);
+      print('[DartSSH] Launching session $sessionId...');
 
       if (windows) {
         final started = await _run(
@@ -162,7 +177,7 @@ class DartSshLauncher extends SshLauncher {
           initialSession: null,
           initialForward: forward,
         );
-        return await _connectKeeper(keeper, target);
+        return await _connectKeeper(keeper, target, onProgress: onProgress);
       } else {
         final session = await client.execute(
           sessionCommand(sessionId, resume: false),
@@ -175,9 +190,10 @@ class DartSshLauncher extends SshLauncher {
           initialSession: session,
           initialForward: null,
         );
-        return await _connectKeeper(keeper, target);
+        return await _connectKeeper(keeper, target, onProgress: onProgress);
       }
     } catch (error) {
+      print('[DartSSH] Error in connect: $error');
       client.close();
       rethrow;
     }
@@ -185,16 +201,21 @@ class DartSshLauncher extends SshLauncher {
 
   Future<SshConnection> _connectKeeper(
     _DartSshSessionKeeper keeper,
-    SshTarget target,
-  ) async {
+    SshTarget target, {
+    void Function(String message)? onProgress,
+  }) async {
+    onProgress?.call('Initializing session...');
+    print('[DartSSH] Initializing RPC client...');
     final peer = RpcPeer(keeper.channel.messages, keeper.channel.send);
     final remoteClient = RemoteClient(peer);
     try {
       await remoteClient.initialize().timeout(
         const Duration(seconds: 30),
       );
+      print('[DartSSH] RPC client initialized successfully');
     } catch (error) {
       await keeper.close();
+      print('[DartSSH] Failed to initialize RPC client: $error');
       throw SshConnectException(
         SshFailure.server,
         'The server on ${target.name} did not initialize: $error',
@@ -256,8 +277,19 @@ class DartSshLauncher extends SshLauncher {
             Platform.environment['USERNAME'] ??
             'root';
       }
+      if (dest.contains(':') && !dest.contains(']')) {
+        final colon = dest.lastIndexOf(':');
+        final p = int.tryParse(dest.substring(colon + 1));
+        if (p != null) {
+          dest = dest.substring(0, colon);
+          port = p;
+        } else {
+          port = target.port ?? 22;
+        }
+      } else {
+        port = target.port ?? 22;
+      }
       host = dest;
-      port = target.port ?? 22;
     }
 
     if (host.startsWith('[') && host.endsWith(']')) {
@@ -265,6 +297,7 @@ class DartSshLauncher extends SshLauncher {
     }
 
     onProgress?.call('Connecting to $host:$port');
+    print('[DartSSH] Connecting TCP socket to $host:$port (user: $username)...');
     final SSHSocket socket;
     try {
       socket = await SSHSocket.connect(
@@ -273,12 +306,14 @@ class DartSshLauncher extends SshLauncher {
         timeout: const Duration(seconds: 15),
       );
     } on SocketException catch (e) {
+      print('[DartSSH] SocketException connecting to $host:$port: ${e.message}');
       throw SshConnectException(
         SshFailure.unreachable,
         'Could not reach host $host:$port',
         detail: e.message,
       );
     } catch (e) {
+      print('[DartSSH] Exception connecting to $host:$port: $e');
       throw SshConnectException(
         SshFailure.unreachable,
         'Could not connect to $host:$port: $e',
@@ -327,6 +362,7 @@ class DartSshLauncher extends SshLauncher {
       username: username ?? 'root',
       identities: identities.isNotEmpty ? identities : null,
       onPasswordRequest: () async {
+        print('[DartSSH] Server requested password authentication');
         final answer = await prompter?.call(
           SshPrompt(
             target,
@@ -336,11 +372,13 @@ class DartSshLauncher extends SshLauncher {
         );
         promptCount++;
         if (answer == null) {
+          print('[DartSSH] Password prompt cancelled by user');
           throw SSHAuthAbortError(SshLauncher.cancelledMessage);
         }
         return answer;
       },
       onUserInfoRequest: (request) async {
+        print('[DartSSH] Server requested keyboard-interactive authentication');
         final answers = <String>[];
         for (final pr in request.prompts) {
           final ans = await prompter?.call(
@@ -352,6 +390,7 @@ class DartSshLauncher extends SshLauncher {
           );
           promptCount++;
           if (ans == null) {
+            print('[DartSSH] Prompt cancelled by user');
             throw SSHAuthAbortError(SshLauncher.cancelledMessage);
           }
           answers.add(ans);
@@ -359,19 +398,24 @@ class DartSshLauncher extends SshLauncher {
         return answers;
       },
       onVerifyHostKey: (type, fingerprint) => true,
+      printDebug: (msg) => print('[DartSSH Debug] $msg'),
     );
 
     try {
+      print('[DartSSH] Awaiting SSH authentication...');
       await client.authenticated;
+      print('[DartSSH] SSH authentication successful!');
       return client;
     } on SSHAuthAbortError {
       client.close();
+      print('[DartSSH] SSH authentication aborted');
       throw const SshConnectException(
         SshFailure.authentication,
         SshLauncher.cancelledMessage,
       );
     } on SSHAuthFailError catch (e) {
       client.close();
+      print('[DartSSH] SSH authentication failed: ${e.message}');
       throw SshConnectException(
         SshFailure.authentication,
         'The host refused to sign in: the key, or the password given.',
@@ -379,6 +423,7 @@ class DartSshLauncher extends SshLauncher {
       );
     } catch (e) {
       client.close();
+      print('[DartSSH] SSH error: $e');
       throw SshConnectException(
         SshFailure.unreachable,
         'SSH authentication failed: $e',
@@ -390,27 +435,50 @@ class DartSshLauncher extends SshLauncher {
     SSHClient client,
     String command, {
     List<int>? stdin,
-    Duration timeout = const Duration(minutes: 5),
+    Duration timeout = const Duration(minutes: 2),
   }) async {
     final session = await client.execute(command);
+    final stdoutBuffer = BytesBuilder();
+    final stderrBuffer = BytesBuilder();
+    final stdoutDone = Completer<void>();
+    final stderrDone = Completer<void>();
+
+    session.stdout.listen(
+      stdoutBuffer.add,
+      onDone: () {
+        if (!stdoutDone.isCompleted) stdoutDone.complete();
+      },
+      onError: (Object e, StackTrace s) {
+        if (!stdoutDone.isCompleted) stdoutDone.completeError(e, s);
+      },
+      cancelOnError: true,
+    );
+
+    session.stderr.listen(
+      stderrBuffer.add,
+      onDone: () {
+        if (!stderrDone.isCompleted) stderrDone.complete();
+      },
+      onError: (Object e, StackTrace s) {
+        if (!stderrDone.isCompleted) stderrDone.completeError(e, s);
+      },
+      cancelOnError: true,
+    );
+
     if (stdin != null) {
       session.stdin.add(Uint8List.fromList(stdin));
     }
     await session.stdin.close();
 
-    final stdoutBuffer = BytesBuilder();
-    final stderrBuffer = BytesBuilder();
-    final stdoutSub = session.stdout.listen(stdoutBuffer.add);
-    final stderrSub = session.stderr.listen(stderrBuffer.add);
-
-    await session.done.timeout(
-      timeout,
-      onTimeout: () {
-        session.channel.close();
-        throw TimeoutException('Command timed out: $command');
-      },
-    );
-    await Future.wait([stdoutSub.asFuture<void>(), stderrSub.asFuture<void>()]);
+    try {
+      await Future.wait([stdoutDone.future, stderrDone.future]).timeout(
+        timeout,
+      );
+      await session.done.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      session.channel.close();
+      throw TimeoutException('Command timed out ($command)');
+    }
 
     return (
       exitCode: session.exitCode ?? 0,
