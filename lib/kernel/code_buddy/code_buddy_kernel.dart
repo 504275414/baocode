@@ -109,6 +109,8 @@ class CodeBuddyKernel
   String? _turn;
   DateTime? _turnStarted;
   DateTime? _modelCompletedAt;
+  bool _turnHasOutput = false;
+  bool _isReplayingHistory = false;
   final Set<String> _sentTurns = {};
 
   /// Queued turns waiting to execute once the active turn ends
@@ -352,19 +354,25 @@ class CodeBuddyKernel
       final Map<String, Object?> sessionResult;
       final resumeId = context.resume?.id;
       if (resumeId != null && resumeId.isNotEmpty) {
-        final loadRes = await _request('session/load', {
-          'sessionId': resumeId,
-          'cwd': normalizedCwd,
-          'mcpServers': mcpServersList,
-        });
-        sessionResult = loadRes;
-        _sessionId = resumeId;
+        _isReplayingHistory = true;
+        try {
+          final loadRes = await _request('session/load', {
+            'sessionId': resumeId,
+            'cwd': normalizedCwd,
+            'mcpServers': mcpServersList,
+          });
+          sessionResult = loadRes;
+          _sessionId = resumeId;
+        } finally {
+          _isReplayingHistory = false;
+        }
         _closeThoughtIfOpen();
         _closeMessageIfOpen();
         if (_replayingTurnId case final turnId?) {
           emit(TurnEnded(nextSeq, turnId, interrupted: false));
           _replayingTurnId = null;
-        }      } else {
+        }
+      } else {
         final newRes = await _request('session/new', {
           'cwd': normalizedCwd,
           'mcpServers': mcpServersList,
@@ -574,6 +582,7 @@ class CodeBuddyKernel
   void _startTurn(KernelTurn turn) {
     _turn = turn.id;
     _turnPromptInFlight = false;
+    _turnHasOutput = false;
     _turnStarted = DateTime.now();
     _modelCompletedAt = null;
 
@@ -789,6 +798,8 @@ class CodeBuddyKernel
 
       // Prompt completed successfully (or was cancelled)
       if (_turn == turn.id) {
+        _closeThoughtIfOpen();
+        _closeMessageIfOpen();
         _endTurn(turn.id, interrupted: res['stopReason'] == 'cancelled');
       }
     } catch (e, st) {
@@ -1142,6 +1153,8 @@ class CodeBuddyKernel
     switch (type) {
       case 'session_info_update':
         _handleSessionInfoUpdate(update);
+      case 'session_end':
+        _handleSessionEnd(update);
       case 'user_message_chunk':
         _handleUserMessageChunk(update);
       case 'config_option_update':
@@ -1173,10 +1186,24 @@ class CodeBuddyKernel
     }
   }
 
+  void _handleSessionEnd(Map<String, Object?> update) {
+    if (_isReplayingHistory) return;
+    _modelCompletedAt ??= DateTime.now();
+    _closeThoughtIfOpen();
+    _closeMessageIfOpen();
+    if (_turn case final activeTurn?) {
+      final isCancelled = update['stopReason'] == 'cancelled';
+      _endTurn(activeTurn, interrupted: isCancelled);
+    }
+  }
+
   void _handleSessionInfoUpdate(Map<String, Object?> update) {
     final meta = update['_meta'] as Map?;
     final replay = meta?['codebuddy.ai/historyReplay'] as String?;
-    if (replay == 'end') {
+    if (replay == 'start') {
+      _isReplayingHistory = true;
+    } else if (replay == 'end') {
+      _isReplayingHistory = false;
       _closeThoughtIfOpen();
       _closeMessageIfOpen();
       if (_replayingTurnId case final turnId?) {
@@ -1186,18 +1213,35 @@ class CodeBuddyKernel
       emit(KernelInfoChanged(nextSeq));
     }
 
-    final phase = (meta?['codebuddy.ai/agentPhase'] as Map?)?['phase'] as String?;
-    if (phase == 'idle') {
-      _modelCompletedAt ??= DateTime.now();
-      _closeThoughtIfOpen();
-      _closeMessageIfOpen();
-      if (_turn case final activeTurn?) {
-        _endTurn(activeTurn, interrupted: false);
+    final phaseInfo = meta?['codebuddy.ai/agentPhase'] as Map?;
+    final phase = phaseInfo?['phase'] as String?;
+    if (phase != null) {
+      if (phase == 'model_streaming' || phase == 'model_done' || phase == 'tool_executing') {
+        _turnHasOutput = true;
+      }
+      if (phase == 'model_done' && _runningTools.isEmpty) {
+        _modelCompletedAt ??= DateTime.now();
+      } else if (phase == 'tool_executing' || phase == 'model_streaming') {
+        _modelCompletedAt = null;
+      }
+
+      if (phase == 'idle' && _turnPromptInFlight && _turnHasOutput && !_isReplayingHistory) {
+        _modelCompletedAt ??= DateTime.now();
+        _closeThoughtIfOpen();
+        _closeMessageIfOpen();
+        if (_turn case final activeTurn?) {
+          _endTurn(activeTurn, interrupted: false);
+        }
       }
     }
   }
 
   void _handleUserMessageChunk(Map<String, Object?> update) {
+    // If we are currently executing our own active turn, this user_message_chunk
+    // is just the server echoing our prompt back (multi-tab/multi-page sync).
+    // Ignore it so we don't duplicate the turn or reset the active turn.
+    if (_turn != null) return;
+
     _closeThoughtIfOpen();
     _closeMessageIfOpen();
 
@@ -1374,6 +1418,8 @@ class CodeBuddyKernel
   }
 
   void _handleThoughtChunk(Map<String, Object?> update) {
+    _turnHasOutput = true;
+    _modelCompletedAt = null;
     _closeMessageIfOpen();
 
     final content = update['content'] as Map?;
@@ -1426,6 +1472,8 @@ class CodeBuddyKernel
   }
 
   void _handleMessageChunk(Map<String, Object?> update) {
+    _turnHasOutput = true;
+    _modelCompletedAt = null;
     _closeThoughtIfOpen();
 
     final content = update['content'] as Map?;
@@ -1459,6 +1507,9 @@ class CodeBuddyKernel
     final text = _messageBuffer?.toString() ?? '';
     _currentMessageId = null;
     _messageBuffer = null;
+    if (_turn != null && !_isReplayingHistory) {
+      _modelCompletedAt = DateTime.now();
+    }
     emit(
       ItemCompleted(
         nextSeq,
@@ -1469,6 +1520,8 @@ class CodeBuddyKernel
   }
 
   void _handleToolCall(Map<String, Object?> update) {
+    _turnHasOutput = true;
+    _modelCompletedAt = null;
     _closeThoughtIfOpen();
     _closeMessageIfOpen();
 
@@ -1560,6 +1613,7 @@ class CodeBuddyKernel
 
   void _endTurn(String turn, {required bool interrupted}) {
     _turnPromptInFlight = false;
+    _turnHasOutput = false;
     _cancelFallbackTimer?.cancel();
     _cancelFallbackTimer = null;
     _turn = null;
@@ -1606,15 +1660,19 @@ class CodeBuddyKernel
     final finishTime = _modelCompletedAt ?? DateTime.now();
     _modelCompletedAt = null;
 
+    final rawWorked = switch (_turnStarted) {
+      final started? => finishTime.difference(started),
+      null => null,
+    };
+    _turnStarted = null;
+    final worked = rawWorked != null && rawWorked.isNegative ? Duration.zero : rawWorked;
+
     emit(
       TurnEnded(
         nextSeq,
         turn,
         interrupted: interrupted,
-        worked: switch (_turnStarted) {
-          final started? => finishTime.difference(started),
-          null => null,
-        },
+        worked: worked,
       ),
     );
 
